@@ -154,6 +154,8 @@ def chat_json(
     while output_attempt <= retries:
         attempt += 1
         request_error: openai.OpenAIError | None = None
+        response: Any | None = None
+        usage: Usage | None = None
         with request_slot(role, cap=settings.OMNISIM_DAILY_TOKEN_CAP) as slot:
             started = perf_counter()
             try:
@@ -206,6 +208,8 @@ def chat_json(
                 continue
             raise LLMUnavailable(f"llm request failed ({type(exc).__name__})") from exc
 
+        if response is None or usage is None:
+            raise LLMUnavailable("llm returned an empty response")
         total = Usage(
             prompt_tokens=total.prompt_tokens + usage.prompt_tokens,
             completion_tokens=total.completion_tokens + usage.completion_tokens,

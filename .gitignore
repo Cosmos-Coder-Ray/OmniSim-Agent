@@ -11,6 +11,8 @@ build/
 !.env.example
 *.log
 *.sqlite3
+data/llm_usage.sqlite3
+data/llm_calls.jsonl
 .DS_Store
 Thumbs.db
 node_modules/
