@@ -21,5 +21,6 @@ coverage/
 .coverage
 htmlcov/
 *.spec
-env_docs/
+rules/*
+rules/AGENTS.md
 .claude/
