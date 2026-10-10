@@ -1,0 +1,216 @@
+{
+  "budget": 40,
+  "seed_count": 3,
+  "strategies": [
+    {
+      "strategy": "nemotron",
+      "sims_to_first_failure": {
+        "mean": 21.667,
+        "std": 13.888,
+        "per_seed": [
+          9,
+          15,
+          null
+        ],
+        "seeds_with_failure": 2,
+        "mean_is_lower_bound": true
+      },
+      "cumulative_failures": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.333,
+        0.333,
+        0.667,
+        0.667,
+        0.667,
+        0.667,
+        1.333,
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        2.333,
+        2.667,
+        3.0,
+        3.0,
+        3.0,
+        3.333,
+        3.667,
+        4.0,
+        4.333,
+        4.667,
+        4.667,
+        5.333,
+        5.333,
+        6.0,
+        6.0,
+        6.667,
+        6.667,
+        7.0,
+        7.333,
+        7.667,
+        7.667
+      ],
+      "unique_failure_kinds": {
+        "kinds": [
+          "torque_saturation",
+          "tracking_error",
+          "singularity",
+          "instability"
+        ],
+        "mean": 1.333,
+        "std": 1.247
+      },
+      "best_risk": {
+        "mean": 1.027,
+        "std": 0.179
+      }
+    },
+    {
+      "strategy": "random",
+      "sims_to_first_failure": {
+        "mean": 36.667,
+        "std": 6.128,
+        "per_seed": [
+          28,
+          null,
+          null
+        ],
+        "seeds_with_failure": 1,
+        "mean_is_lower_bound": true
+      },
+      "cumulative_failures": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.333,
+        0.333,
+        0.333,
+        0.667,
+        0.667,
+        1.0,
+        1.333,
+        1.333,
+        1.667,
+        1.667,
+        2.0,
+        2.0,
+        2.0
+      ],
+      "unique_failure_kinds": {
+        "kinds": [
+          "joint_limit",
+          "velocity_limit",
+          "instability"
+        ],
+        "mean": 1.0,
+        "std": 1.414
+      },
+      "best_risk": {
+        "mean": 0.9,
+        "std": 0.185
+      }
+    },
+    {
+      "strategy": "cmaes",
+      "sims_to_first_failure": {
+        "mean": 23.667,
+        "std": 5.437,
+        "per_seed": [
+          18,
+          22,
+          31
+        ],
+        "seeds_with_failure": 3,
+        "mean_is_lower_bound": false
+      },
+      "cumulative_failures": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.333,
+        0.667,
+        0.667,
+        1.0,
+        1.333,
+        1.333,
+        1.667,
+        1.667,
+        2.333,
+        2.667,
+        2.667,
+        2.667,
+        3.0,
+        3.667,
+        4.0,
+        4.0,
+        4.667,
+        5.0,
+        5.333,
+        5.333,
+        5.333,
+        5.333,
+        5.333
+      ],
+      "unique_failure_kinds": {
+        "kinds": [
+          "joint_limit",
+          "tracking_error",
+          "singularity",
+          "collision"
+        ],
+        "mean": 1.667,
+        "std": 1.247
+      },
+      "best_risk": {
+        "mean": 0.9,
+        "std": 0.062
+      }
+    }
+  ],
+  "source": "mock"
+}

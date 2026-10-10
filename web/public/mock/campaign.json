@@ -1,0 +1,156 @@
+{
+  "robot": "Franka Emika Panda",
+  "budget": 2,
+  "strategy": "nemotron",
+  "seed": 17017,
+  "episodes": [
+    {
+      "episode_id": "ep_016",
+      "params": {
+        "payload_kg": 0.0,
+        "link_mass_scale": 1.0,
+        "joint_damping": 0.0,
+        "latency_ticks": 0,
+        "sensor_noise_rad": 0.0,
+        "torque_limit_scale": 1.0,
+        "speed_scale": 1.0,
+        "kp_scale": 1.0,
+        "push_force_n": 0.0,
+        "push_time_s": 2.0,
+        "seed": 17016
+      },
+      "failures": [],
+      "risk": 0.18,
+      "max_tau_ratio": 0.62,
+      "max_vel_ratio": 0.57,
+      "final_ee_error_m": 0.012,
+      "min_manipulability": 0.08,
+      "trajectory_path": null
+    },
+    {
+      "episode_id": "ep_017",
+      "params": {
+        "payload_kg": 1.1,
+        "link_mass_scale": 1.12,
+        "joint_damping": 0.45,
+        "latency_ticks": 4,
+        "sensor_noise_rad": 0.006,
+        "torque_limit_scale": 0.72,
+        "speed_scale": 0.82,
+        "kp_scale": 0.9,
+        "push_force_n": 8.0,
+        "push_time_s": 2.0,
+        "seed": 17017
+      },
+      "failures": [
+        {
+          "kind": "torque_saturation",
+          "t": 2.0,
+          "joint": 4,
+          "severity": 1.08,
+          "detail": {
+            "limit_ratio": 1.08,
+            "label": "[mock]"
+          }
+        },
+        {
+          "kind": "tracking_error",
+          "t": 4.0,
+          "joint": null,
+          "severity": 0.74,
+          "detail": {
+            "error_m": 0.074,
+            "label": "[mock]"
+          }
+        }
+      ],
+      "risk": 1.24,
+      "max_tau_ratio": 1.08,
+      "max_vel_ratio": 0.88,
+      "final_ee_error_m": 0.074,
+      "min_manipulability": 0.018,
+      "trajectory_path": "episode_ep_017.json"
+    }
+  ],
+  "events": [
+    {
+      "type": "campaign_started",
+      "data": {
+        "campaign_id": "mock_campaign_01"
+      }
+    },
+    {
+      "type": "hypothesis",
+      "data": {
+        "episode_id": "ep_017",
+        "label": "[mock]"
+      }
+    },
+    {
+      "type": "scenario_batch",
+      "data": {
+        "episode_ids": [
+          "ep_016",
+          "ep_017"
+        ]
+      }
+    },
+    {
+      "type": "episode_done",
+      "data": {
+        "episode_id": "ep_016",
+        "ticks": 360,
+        "control_hz": 60,
+        "duration_s": 6.0
+      }
+    },
+    {
+      "type": "episode_done",
+      "data": {
+        "episode_id": "ep_017",
+        "ticks": 360,
+        "control_hz": 60,
+        "duration_s": 6.0
+      }
+    },
+    {
+      "type": "failure_found",
+      "data": {
+        "episode_id": "ep_017",
+        "risk": 1.24
+      }
+    },
+    {
+      "type": "cluster_updated",
+      "data": {
+        "failure_count": 2
+      }
+    },
+    {
+      "type": "spec_ready",
+      "data": {
+        "robot": "Franka Emika Panda"
+      }
+    },
+    {
+      "type": "shrink_done",
+      "data": {
+        "episode_id": "ep_017",
+        "label": "[mock]"
+      }
+    },
+    {
+      "type": "diagnosis_ready",
+      "data": {
+        "label": "[mock]"
+      }
+    },
+    {
+      "type": "campaign_done",
+      "data": {
+        "episode_count": 2
+      }
+    }
+  ],
+  "source": "mock"
+}
