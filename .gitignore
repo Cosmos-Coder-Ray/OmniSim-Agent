@@ -21,3 +21,5 @@ coverage/
 .coverage
 htmlcov/
 *.spec
+env_docs/
+.claude/
