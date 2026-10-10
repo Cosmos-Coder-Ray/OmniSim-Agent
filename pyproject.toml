@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.26.3"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omnisim-agent"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pybullet",
+    "numpy",
+    "pydantic>=2",
+    "openai",
+    "tavily-python",
+    "fastapi",
+    "uvicorn",
+    "sse-starlette",
+    "slowapi",
+    "cma",
+    "httpx",
+    "rich",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-xdist",
+    "hypothesis",
+    "ruff",
+    "pyright",
+    "pre-commit",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/omnisim"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+include = ["src", "tests", "scripts"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["docs/SPEC.md"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
