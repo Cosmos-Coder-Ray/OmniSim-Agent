@@ -1,7 +1,10 @@
+import tempfile
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 from omnisim.llm.budget import BudgetExceeded, check, get_usage_summary, record
 
@@ -45,16 +48,15 @@ def test_check_raises_when_daily_cap_is_reached(tmp_path) -> None:
         )
     ),
 )
-def test_check_matches_total_recorded_usage(
-    tmp_path, cap: int, usages: list[tuple[int, int]]
-) -> None:
+def test_check_matches_total_recorded_usage(cap: int, usages: list[tuple[int, int]]) -> None:
     now = datetime(2026, 10, 10, tzinfo=UTC)
-    path = tmp_path / "usage.sqlite3"
-    for prompt, completion in usages:
-        record("fast", prompt, completion, db_path=path, now=now)
+    with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as directory:
+        path = Path(directory) / "usage.sqlite3"
+        for prompt, completion in usages:
+            record("fast", prompt, completion, db_path=path, now=now)
 
-    if sum(prompt + completion for prompt, completion in usages) >= cap:
-        with pytest.raises(BudgetExceeded):
+        if sum(prompt + completion for prompt, completion in usages) >= cap:
+            with pytest.raises(BudgetExceeded):
+                check("deep", cap=cap, db_path=path, now=now)
+        else:
             check("deep", cap=cap, db_path=path, now=now)
-    else:
-        check("deep", cap=cap, db_path=path, now=now)

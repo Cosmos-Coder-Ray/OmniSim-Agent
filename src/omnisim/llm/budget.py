@@ -1,5 +1,6 @@
 import sqlite3
-from contextlib import closing
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,7 +46,53 @@ def _connect(db_path: Path) -> sqlite3.Connection:
             PRIMARY KEY (day, role)
         )"""
     )
+    connection.commit()
     return connection
+
+
+@contextmanager
+def request_slot(
+    role: str,
+    *,
+    cap: int | None = None,
+    db_path: Path = DB_PATH,
+    now: datetime | None = None,
+) -> Iterator[sqlite3.Connection]:
+    connection = _connect(db_path)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        check(role, cap=cap, db_path=db_path, now=now, connection=connection)
+        yield connection
+        connection.commit()
+    finally:
+        if connection.in_transaction:
+            connection.rollback()
+        connection.close()
+
+
+def _total(connection: sqlite3.Connection, day: str) -> int:
+    return connection.execute(
+        "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM usage WHERE day = ?",
+        (day,),
+    ).fetchone()[0]
+
+
+def _record(
+    connection: sqlite3.Connection,
+    role: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    day: str,
+) -> None:
+    connection.execute(
+        """INSERT INTO usage (day, role, calls, prompt_tokens, completion_tokens)
+        VALUES (?, ?, 1, ?, ?)
+        ON CONFLICT(day, role) DO UPDATE SET
+            calls = calls + 1,
+            prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+            completion_tokens = completion_tokens + excluded.completion_tokens""",
+        (day, role, prompt_tokens, completion_tokens),
+    )
 
 
 def check(
@@ -54,13 +101,14 @@ def check(
     cap: int | None = None,
     db_path: Path = DB_PATH,
     now: datetime | None = None,
+    connection: sqlite3.Connection | None = None,
 ) -> None:
     limit = Settings.from_env().OMNISIM_DAILY_TOKEN_CAP if cap is None else cap
-    with closing(_connect(db_path)) as connection, connection:
-        total = connection.execute(
-            "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM usage WHERE day = ?",
-            (_day(now),),
-        ).fetchone()[0]
+    if connection is None:
+        with closing(_connect(db_path)) as db, db:
+            total = _total(db, _day(now))
+    else:
+        total = _total(connection, _day(now))
     if total >= limit:
         raise BudgetExceeded(f"daily token cap reached ({total}/{limit})")
 
@@ -72,17 +120,13 @@ def record(
     *,
     db_path: Path = DB_PATH,
     now: datetime | None = None,
+    connection: sqlite3.Connection | None = None,
 ) -> None:
-    with closing(_connect(db_path)) as connection, connection:
-        connection.execute(
-            """INSERT INTO usage (day, role, calls, prompt_tokens, completion_tokens)
-            VALUES (?, ?, 1, ?, ?)
-            ON CONFLICT(day, role) DO UPDATE SET
-                calls = calls + 1,
-                prompt_tokens = prompt_tokens + excluded.prompt_tokens,
-                completion_tokens = completion_tokens + excluded.completion_tokens""",
-            (_day(now), role, prompt_tokens, completion_tokens),
-        )
+    if connection is None:
+        with closing(_connect(db_path)) as db, db:
+            _record(db, role, prompt_tokens, completion_tokens, _day(now))
+    else:
+        _record(connection, role, prompt_tokens, completion_tokens, _day(now))
 
 
 def get_usage_summary(
