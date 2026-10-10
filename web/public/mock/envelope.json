@@ -1,0 +1,66 @@
+{
+  "robot": "Franka Emika Panda",
+  "version": "mock-0",
+  "limits": {
+    "max_payload_kg": 2.0,
+    "speed_scale_max": 1.2,
+    "max_latency_ms": 100,
+    "torque_utilization_cap": 0.85
+  },
+  "controller": {
+    "kp_scale": [
+      0.7,
+      1.2
+    ],
+    "kd_scale": [
+      0.7,
+      1.2
+    ]
+  },
+  "domain_randomization_bounds": {
+    "payload_kg": [
+      0.0,
+      2.0
+    ],
+    "latency_ticks": [
+      0,
+      6
+    ],
+    "speed_scale": [
+      0.5,
+      1.2
+    ]
+  },
+  "evidence": [
+    {
+      "claim": "joint torque limit",
+      "value": 87.0,
+      "unit": "N·m",
+      "source_url": "https://mock.invalid/franka/joint-torque-limits",
+      "quote": "[mock] joint torque limit is listed as 87.0 N·m",
+      "verified": true
+    },
+    {
+      "claim": "joint velocity limit",
+      "value": 2.175,
+      "unit": "rad/s",
+      "source_url": "https://mock.invalid/franka/joint-velocity-limits",
+      "quote": "[mock] joint velocity limit is listed as 2.175 rad/s",
+      "verified": true
+    },
+    {
+      "claim": "joint position range",
+      "value": "[-2.9, 2.9]",
+      "unit": "rad",
+      "source_url": "https://mock.invalid/franka/joint-position-limits",
+      "quote": "[mock] joint position range is listed as [-2.9, 2.9] rad",
+      "verified": true
+    }
+  ],
+  "verification": {
+    "n_scenarios": 20,
+    "seed": 17017,
+    "fail_rate_before": 0.2,
+    "fail_rate_after": 0.0
+  }
+}

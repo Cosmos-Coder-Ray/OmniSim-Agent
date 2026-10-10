@@ -1,0 +1,43 @@
+{
+  "robot": "Franka Emika Panda",
+  "joint_torque_limits_nm": [
+    {
+      "claim": "joint torque limit",
+      "value": 87.0,
+      "unit": "N·m",
+      "source_url": "https://mock.invalid/franka/joint-torque-limits",
+      "quote": "[mock] joint torque limit is listed as 87.0 N·m",
+      "verified": true
+    }
+  ],
+  "joint_velocity_limits": [
+    {
+      "claim": "joint velocity limit",
+      "value": 2.175,
+      "unit": "rad/s",
+      "source_url": "https://mock.invalid/franka/joint-velocity-limits",
+      "quote": "[mock] joint velocity limit is listed as 2.175 rad/s",
+      "verified": true
+    }
+  ],
+  "joint_position_limits": [
+    {
+      "claim": "joint position range",
+      "value": "[-2.9, 2.9]",
+      "unit": "rad",
+      "source_url": "https://mock.invalid/franka/joint-position-limits",
+      "quote": "[mock] joint position range is listed as [-2.9, 2.9] rad",
+      "verified": true
+    }
+  ],
+  "error_taxonomy": [
+    {
+      "claim": "error taxonomy",
+      "value": "joint_reflex",
+      "unit": null,
+      "source_url": "https://mock.invalid/franka/error-taxonomy",
+      "quote": "[mock] joint_reflex is a protective stop category",
+      "verified": false
+    }
+  ]
+}

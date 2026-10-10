@@ -17,10 +17,15 @@ node_modules/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.pyright/
+.cache/
 coverage/
 .coverage
 htmlcov/
 *.spec
+runs/
+web/dist/
 rules/*
 rules/AGENTS.md
 .claude/
