@@ -8,7 +8,7 @@ from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
 from omnisim.config import Settings
-from omnisim.llm.budget import LLMError, Usage, check, record, request_slot
+from omnisim.llm.budget import LLMError, LLMUnavailable, Usage, check, record, request_slot
 from omnisim.llm.call_log import write_call_log
 from omnisim.llm.json_utils import _objects, _strip_think
 from omnisim.llm.models import Role, resolve_model
@@ -24,10 +24,6 @@ class LLMOutputError(LLMError):
     def __init__(self, message: str, last_error: Exception) -> None:
         super().__init__(message)
         self.last_error = last_error
-
-
-class LLMUnavailable(LLMError):
-    pass
 
 
 def get_client() -> OpenAI:

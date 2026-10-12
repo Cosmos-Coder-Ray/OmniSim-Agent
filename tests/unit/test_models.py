@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from omnisim.llm import models
+from omnisim.llm.budget import LLMUnavailable
 from omnisim.llm.models import _list_models, list_models, resolve_model
 
 
@@ -30,6 +31,16 @@ def test_resolve_model_uses_configured_id(monkeypatch: pytest.MonkeyPatch) -> No
     assert resolve_model(client, "fast") == "nvidia/nemotron-custom"
 
 
+@pytest.mark.parametrize("configured", ["other/model", "other/nemotron-custom"])
+def test_resolve_model_ignores_configured_non_nemotron(
+    monkeypatch: pytest.MonkeyPatch, configured: str
+) -> None:
+    monkeypatch.setenv("NEBIUS_FAST_MODEL", configured)
+    client = FakeClient([configured, "nvidia/nemotron-lightning"])
+
+    assert resolve_model(client, "fast") == "nvidia/nemotron-lightning"
+
+
 def test_resolve_model_uses_role_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEBIUS_DEEP_MODEL", raising=False)
     client = FakeClient(["nvidia/nemotron-nano", "nvidia/nemotron-super"])
@@ -49,13 +60,13 @@ def test_resolve_model_falls_back_when_configured_id_is_missing(
 def test_resolve_model_fails_without_nemotron(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEBIUS_FAST_MODEL", raising=False)
 
-    with pytest.raises(ValueError, match="no Nemotron model"):
+    with pytest.raises(LLMUnavailable, match="no Nemotron model"):
         resolve_model(FakeClient(["other/model"]), "fast")
 
 
 def test_resolve_model_never_selects_non_nvidia_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NEBIUS_FAST_MODEL", raising=False)
-    client = FakeClient(["other/lightning", "nvidia/nemotron-other"])
+    client = FakeClient(["aaa/nemotron-lightning", "other/lightning", "nvidia/nemotron-other"])
 
     assert resolve_model(client, "fast") == "nvidia/nemotron-other"
 

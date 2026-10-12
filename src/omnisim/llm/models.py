@@ -6,10 +6,16 @@ from typing import Any, Literal
 import openai
 
 from omnisim.config import Settings
+from omnisim.llm.budget import LLMUnavailable
 from omnisim.llm.call_log import write_call_log
 
 log = logging.getLogger(__name__)
 Role = Literal["fast", "deep", "ultra"]
+
+
+def _is_nemotron(model: str) -> bool:
+    model_id = model.lower()
+    return model_id.startswith("nvidia/") and "nemotron" in model_id
 
 
 @lru_cache(maxsize=32)
@@ -60,17 +66,20 @@ def resolve_model(client: Any, role: Role) -> str:
         "ultra": settings.NEBIUS_ULTRA_MODEL,
     }[role]
     available = list_models(client)
-    if configured and configured in available:
+    if configured and configured in available and _is_nemotron(configured):
         return configured
 
     if configured:
-        log.warning("configured model is unavailable", extra={"role": role, "model": configured})
+        reason = "configured model is unavailable"
+        if configured in available:
+            reason = "configured model is not an NVIDIA Nemotron model"
+        log.warning(reason, extra={"role": role, "model": configured})
     else:
         log.warning("configured model is empty", extra={"role": role})
 
-    nemotron = [model for model in available if "nemotron" in model.lower()]
+    nemotron = [model for model in available if _is_nemotron(model)]
     if not nemotron:
-        raise ValueError(f"no Nemotron model available for role {role}")
+        raise LLMUnavailable(f"no Nemotron model available for role {role}")
 
     preferences = {
         "fast": ("lightning", "nano"),

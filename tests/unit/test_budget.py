@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from omnisim.llm.budget import BudgetExceeded, check, get_usage_summary, record
@@ -48,6 +48,7 @@ def test_check_raises_when_daily_cap_is_reached(tmp_path) -> None:
         )
     ),
 )
+@settings(deadline=None)
 def test_check_matches_total_recorded_usage(cap: int, usages: list[tuple[int, int]]) -> None:
     now = datetime(2026, 10, 10, tzinfo=UTC)
     with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as directory:

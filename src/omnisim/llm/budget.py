@@ -18,6 +18,10 @@ class BudgetExceeded(LLMError):
     pass
 
 
+class LLMUnavailable(LLMError):
+    pass
+
+
 @dataclass(frozen=True)
 class Usage:
     prompt_tokens: int = 0

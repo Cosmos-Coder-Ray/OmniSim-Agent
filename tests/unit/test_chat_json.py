@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from omnisim.llm import models, nebius
-from omnisim.llm.budget import BudgetExceeded, Usage, request_slot
+from omnisim.llm.budget import BudgetExceeded, LLMError, Usage, request_slot
 from omnisim.llm.call_log import write_call_log
 
 
@@ -235,6 +235,21 @@ def test_budget_exceeded_sends_no_request(monkeypatch: pytest.MonkeyPatch, setup
 
     assert client.requests == []
     assert client.model_requests == 0
+
+
+def test_missing_nemotron_raises_llm_error_before_completion(
+    monkeypatch: pytest.MonkeyPatch, setup_chat
+) -> None:
+    client = FakeClient([response('{"answer": 7}')])
+    client.models.list = lambda: [SimpleNamespace(id="other/model")]
+    monkeypatch.delenv("NEBIUS_FAST_MODEL", raising=False)
+    monkeypatch.setattr(nebius, "get_client", lambda: client)
+
+    with pytest.raises(LLMError) as exc:
+        run_chat(client)
+
+    assert isinstance(exc.value, nebius.LLMUnavailable)
+    assert client.requests == []
 
 
 def test_usage_is_summed_across_attempts(monkeypatch: pytest.MonkeyPatch, setup_chat) -> None:
