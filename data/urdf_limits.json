@@ -1,0 +1,51 @@
+[
+  {
+    "effort": 87.0,
+    "joint": 0,
+    "lower": -2.9671,
+    "upper": 2.9671,
+    "velocity": 2.175
+  },
+  {
+    "effort": 87.0,
+    "joint": 1,
+    "lower": -1.8326,
+    "upper": 1.8326,
+    "velocity": 2.175
+  },
+  {
+    "effort": 87.0,
+    "joint": 2,
+    "lower": -2.9671,
+    "upper": 2.9671,
+    "velocity": 2.175
+  },
+  {
+    "effort": 87.0,
+    "joint": 3,
+    "lower": -3.1416,
+    "upper": 0.0,
+    "velocity": 2.175
+  },
+  {
+    "effort": 12.0,
+    "joint": 4,
+    "lower": -2.9671,
+    "upper": 2.9671,
+    "velocity": 2.61
+  },
+  {
+    "effort": 12.0,
+    "joint": 5,
+    "lower": -0.0873,
+    "upper": 3.8223,
+    "velocity": 2.61
+  },
+  {
+    "effort": 12.0,
+    "joint": 6,
+    "lower": -2.9671,
+    "upper": 2.9671,
+    "velocity": 2.61
+  }
+]
