@@ -9,3 +9,7 @@
 - Hatchling is the only build-system dependency; it builds the `src/omnisim` package for installation.
 - Mock fixtures use `source="mock"`, envelope version `mock-0`, `https://mock.invalid/` evidence URLs, and quotes prefixed with `[mock]`.
 - The SPEC repo layout is used because `docs/ARCHITECTURE.md` is absent.
+- LLM usage is stored in SQLite at `data/llm_usage.sqlite3`, keyed by UTC date and role. A SQLite write transaction holds request admission through usage recording, so a response can take usage over the cap by at most that response. Missing usage is recorded as zero and logged.
+- LLM callers use `chat_json` with `fast`, `deep`, or `ultra` roles. Model resolution accepts a configured ID only when it is listed and is an NVIDIA Nemotron model, then uses the role-specific Nemotron preference order. Missing NVIDIA Nemotron models raise `LLMUnavailable`; no other model family is selected.
+- Content candidates are validated from first to last; `reasoning_content` candidates are validated from last to first. Schema or JSON failures use the requested repair retries. Transport timeouts, connection errors, 429, and 5xx responses get one retry after 0.25 seconds. SDK retries are disabled and requests use a 30-second timeout.
+- A response ending with `length` doubles `max_tokens` for the next output attempt, capped at 8192 tokens. Each HTTP request attempt, including model listing, is written to `data/llm_calls.jsonl` without prompt contents or credentials. Model listing is not charged against the token budget.

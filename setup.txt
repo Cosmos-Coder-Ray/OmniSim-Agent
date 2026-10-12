@@ -1,0 +1,118 @@
+OmniSim-Agent developer setup
+=============================
+
+This file describes how to set up a fresh clone for local development.
+
+1. Install prerequisites
+------------------------
+
+Install the following tools:
+
+- Git
+- Python 3.11
+- uv
+
+The repository pins Python 3.11 in `.python-version`. If Python 3.11 is not
+already installed, uv can install it with:
+
+    uv python install 3.11
+
+Install uv using the instructions for your operating system:
+
+    https://docs.astral.sh/uv/getting-started/installation/
+
+2. Clone the repository
+-----------------------
+
+    git clone https://github.com/Cosmos-Coder-Ray/OmniSim-Agent.git
+    cd OmniSim-Agent
+
+3. Create the Python environment
+--------------------------------
+
+Run these commands from the repository root:
+
+    uv sync --locked
+    uv run pre-commit install
+
+This creates the project virtual environment and installs the runtime and
+development dependencies from `uv.lock`.
+
+If your system does not have `uv`, install it before running these commands.
+Do not commit the generated `.venv` directory.
+
+4. Configure local environment variables
+-----------------------------------------
+
+Create a local environment file from the template:
+
+Windows PowerShell:
+
+    Copy-Item .env.example .env
+
+macOS or Linux:
+
+    cp .env.example .env
+
+Open `.env` and set the credentials required for the services you intend to
+use:
+
+- `NEBIUS_API_KEY` is required for Nemotron requests.
+- `NEBIUS_BASE_URL` and the `NEBIUS_*_MODEL` values should match the Nebius
+  Token Factory configuration.
+- `TAVILY_API_KEY` is required for documentation searches.
+- `OMNISIM_DAILY_TOKEN_CAP` limits the daily LLM token budget.
+- `OMNISIM_DEMO_MODE=true` enables demo mode where supported.
+
+Never commit `.env` or paste API keys into source files. The `.env.example`
+file contains variable names and default non-secret settings only.
+
+5. Verify the installation
+--------------------------
+
+Run the project checks:
+
+    uv run ruff check
+    uv run ruff format --check
+    uv run pyright
+    uv run pytest -q
+
+You can run the same checks with `make check` on systems that provide Make.
+
+Generate the checked-in mock data and confirm it does not change:
+
+    uv run python scripts/gen_mock_data.py
+    git diff --exit-code web/public/mock
+
+6. API status
+-------------
+
+The Makefile contains the intended API command:
+
+    uv run --env-file .env uvicorn omnisim.api.main:app --host 0.0.0.0 --port 8000
+
+The current checkout does not yet include `src/omnisim/api/main.py`, so the API
+cannot be started until that entrypoint is implemented. When it is available,
+the command above loads `.env` and serves the API on:
+
+    http://localhost:8000
+
+Stop the server with `Ctrl+C`.
+
+7. Frontend status
+------------------
+
+The current repository checkout contains mock frontend data under
+`web/public/mock`, but it does not currently contain a `package.json` or a
+frontend source tree. There is therefore no frontend dependency installation
+command to run yet. Do not run `pnpm install` in this checkout.
+
+8. Useful project files
+----------------------
+
+- `pyproject.toml`: Python dependencies and tool configuration
+- `uv.lock`: locked Python dependency versions
+- `.env.example`: local environment variable template
+- `Makefile`: shortcuts for setup, checks, and API startup
+- `docs/SPEC.md`: project design and behavior specification
+- `docs/PROGRESS.md`: current implementation status
