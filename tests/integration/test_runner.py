@@ -56,11 +56,12 @@ def test_run_episode_writes_live_replay_and_keeps_original_params(
     assert ": " not in replay_path.read_text(encoding="utf-8")
 
 
-def test_run_batch_serial_and_spawn_results_match(
+def _assert_run_batch_matches_serial(
     tmp_path: Path,
     urdf_limits: UrdfLimits,
+    episode_count: int,
 ) -> None:
-    params = [ScenarioParams(seed=seed) for seed in range(20)]
+    params = [ScenarioParams(seed=seed) for seed in range(episode_count)]
     run_dir = tmp_path / "runs"
 
     with EpisodeRunner() as serial_runner:
@@ -71,8 +72,25 @@ def test_run_batch_serial_and_spawn_results_match(
         parallel = parallel_runner.run_batch(params, urdf_limits, workers=4, run_dir=run_dir)
 
     assert parallel == serial
-    assert [result.episode_id for result in parallel] == [f"ep_{i:03d}" for i in range(20)]
+    assert [result.episode_id for result in parallel] == [
+        f"ep_{i:03d}" for i in range(episode_count)
+    ]
     assert {path.name: path.read_bytes() for path in run_dir.glob("*.json")} == serial_files
+
+
+def test_run_batch_serial_and_spawn_results_match(
+    tmp_path: Path,
+    urdf_limits: UrdfLimits,
+) -> None:
+    _assert_run_batch_matches_serial(tmp_path, urdf_limits, 6)
+
+
+@pytest.mark.slow
+def test_run_batch_serial_and_spawn_results_match_twenty_episodes(
+    tmp_path: Path,
+    urdf_limits: UrdfLimits,
+) -> None:
+    _assert_run_batch_matches_serial(tmp_path, urdf_limits, 20)
 
 
 def test_run_batch_cooperative_timeout_returns_ordered_errors(
@@ -81,12 +99,12 @@ def test_run_batch_cooperative_timeout_returns_ordered_errors(
     params = [ScenarioParams(seed=seed) for seed in range(4)]
 
     with EpisodeRunner() as runner:
-        results = runner.run_batch(params, urdf_limits, workers=2, timeout_s=1e-9)
+        results = runner.run_batch(params, urdf_limits, workers=1, timeout_s=1e-9)
 
     assert [result.episode_id for result in results] == [f"ep_{i:03d}" for i in range(4)]
     errors = [result for result in results if isinstance(result, EpisodeError)]
     assert len(errors) == 4
-    assert all(error.error_type in {"TimeoutError", "WorkerTimeout"} for error in errors)
+    assert all(error.error_type == "TimeoutError" for error in errors)
 
 
 def test_run_batch_returns_serial_infrastructure_errors(
@@ -169,3 +187,69 @@ def test_run_batch_keeps_successes_and_worker_errors_in_order(
     assert isinstance(results[1], EpisodeError)
     assert results[1].error_type == "RuntimeError"
     assert results[2].params == params[2]
+
+
+def test_run_batch_rebuilds_pool_after_parent_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    urdf_limits: UrdfLimits,
+) -> None:
+    class FakePool:
+        def __init__(self, completes: bool) -> None:
+            self.completes = completes
+            self.terminated = False
+
+        def apply_async(
+            self,
+            _function: object,
+            args: tuple[object, ...],
+            *,
+            callback: Callable[[EpisodeResult | EpisodeError], None],
+            error_callback: Callable[[BaseException], None],
+        ) -> None:
+            if not self.completes:
+                return
+            params = cast(ScenarioParams, args[0])
+            callback(
+                EpisodeResult(
+                    episode_id=cast(str, args[3]),
+                    params=params,
+                    failures=[],
+                    risk=0.0,
+                    max_tau_ratio=0.0,
+                    max_vel_ratio=0.0,
+                    final_ee_error_m=0.0,
+                    min_manipulability=0.0,
+                )
+            )
+
+        def close(self) -> None:
+            pass
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def join(self) -> None:
+            pass
+
+    pools: list[FakePool] = []
+
+    class FakeContext:
+        def Pool(self, *, processes: int, initializer: object) -> FakePool:
+            assert processes == 2
+            assert callable(initializer)
+            pool = FakePool(completes=bool(pools))
+            pools.append(pool)
+            return pool
+
+    monkeypatch.setattr(runner_module.mp, "get_context", lambda method: FakeContext())
+    params = ScenarioParams(seed=17)
+
+    with EpisodeRunner() as runner:
+        timed_out = runner.run_batch([params], urdf_limits, workers=2, timeout_s=1e-9)
+        recovered = runner.run_batch([params], urdf_limits, workers=2)
+
+    assert len(pools) == 2
+    assert pools[0].terminated
+    assert isinstance(timed_out[0], EpisodeError)
+    assert timed_out[0].error_type == "WorkerTimeout"
+    assert isinstance(recovered[0], EpisodeResult)
