@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -131,7 +132,7 @@ class PandaSim:
         )
         apply_scenario_dynamics(client_id, self.robot, self.params)
 
-    def run(self) -> EpisodeTelemetry:
+    def run(self, deadline: float | None = None) -> EpisodeTelemetry:
         client_id = self._client()
         reference = plan_reference(self.params)
         telemetry = EpisodeTelemetry.allocate()
@@ -139,6 +140,8 @@ class PandaSim:
         position_gains = [0.05 * self.params.kp_scale] * 7
 
         for tick in range(EPISODE_TICKS):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("episode timed out")
             before = p.getJointStates(self.robot, list(ARM_JOINTS), physicsClientId=client_id)
             q_before = np.asarray([state[0] for state in before], dtype=np.float64)
             q_meas = measured_position(q_before, self.params, self.rng)
