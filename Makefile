@@ -1,4 +1,4 @@
-.PHONY: setup check sim-smoke api web
+.PHONY: setup check test-slow sim-smoke api web
 
 setup:
 	uv sync
@@ -8,7 +8,10 @@ check:
 	uv run ruff check
 	uv run ruff format --check
 	uv run pyright
-	uv run pytest -q
+	uv run pytest -q -m "not slow"
+
+test-slow:
+	uv run pytest -q -m slow
 
 sim-smoke:
 	uv run python scripts/sim_smoke.py

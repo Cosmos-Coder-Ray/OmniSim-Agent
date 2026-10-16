@@ -1,11 +1,8 @@
 import time
 
-import numpy as np
-
-from omnisim.schemas import ScenarioParams
+from omnisim.schemas import EpisodeResult, ScenarioParams
 from omnisim.sim.limits import load_urdf_limits
-from omnisim.sim.panda_env import PandaSim
-from omnisim.sim.telemetry import EpisodeTelemetry
+from omnisim.sim.runner import EpisodeError, EpisodeRunner
 
 CASES = (
     ("nominal", {}),
@@ -16,37 +13,35 @@ CASES = (
 )
 
 
-def has_nan(telemetry: EpisodeTelemetry) -> bool:
-    return any(np.isnan(getattr(telemetry, name)).any() for name in telemetry.__dataclass_fields__)
-
-
 def main() -> int:
     limits = load_urdf_limits()
     print(
-        "label              max_tau_ratio  max_vel_ratio  final_ee_error_m  "
-        "min_manipulability  min_link_z  min_joint_margin_rad  wall_s"
+        "label              risk  failures                     max_tau_ratio  max_vel_ratio  "
+        "final_ee_error_m  wall_s"
     )
     start = time.perf_counter()
-    for label, changes in CASES:
-        params = ScenarioParams.model_validate({"seed": 17, **changes})
-        episode_start = time.perf_counter()
-        with PandaSim(params, limits.effort, limits.velocity) as sim:
-            telemetry = sim.run()
-        elapsed = time.perf_counter() - episode_start
-        if has_nan(telemetry):
-            print(f"{label}: NaN in telemetry", flush=True)
-            return 1
+    with EpisodeRunner() as runner:
+        for label, changes in CASES:
+            params = ScenarioParams.model_validate({"seed": 17, **changes})
+            episode_start = time.perf_counter()
+            result = runner.run_batch([params], limits, workers=1)[0]
+            elapsed = time.perf_counter() - episode_start
+            if isinstance(result, EpisodeError):
+                print(f"{label}: {result.error_type}: {result.message}", flush=True)
+                return 1
 
-        print(
-            f"{label:<18} {np.max(telemetry.tau_ratio):>13.4f} "
-            f"{np.max(telemetry.vel_ratio):>14.4f} "
-            f"{np.linalg.norm(telemetry.tracking_error[-1]):>17.4f} "
-            f"{np.min(telemetry.manipulability):>19.6f} "
-            f"{np.min(telemetry.link_positions[:, :, 2]):>11.4f} "
-            f"{np.min(telemetry.joint_margin_rad):>22.4f} {elapsed:>7.3f}"
-        )
+            print_result(label, result, elapsed)
     print(f"total time: {time.perf_counter() - start:.3f}s")
     return 0
+
+
+def print_result(label: str, result: EpisodeResult, elapsed: float) -> None:
+    failure_kinds = ",".join(sorted({event.kind for event in result.failures})) or "none"
+    print(
+        f"{label:<18} {result.risk:>4.2f}  {failure_kinds:<28} "
+        f"{result.max_tau_ratio:>13.4f} {result.max_vel_ratio:>14.4f} "
+        f"{result.final_ee_error_m:>17.4f} {elapsed:>7.3f}"
+    )
 
 
 if __name__ == "__main__":
