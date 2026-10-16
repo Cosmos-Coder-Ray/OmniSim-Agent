@@ -69,7 +69,7 @@ class EpisodeResult(BaseModel):
 
 class Evidence(BaseModel):
     claim: str; value: float | str; unit: str | None = None
-    source_url: str; quote: str; verified: bool        # verified = quote/number found in fetched text
+    source_url: str; quote: str; verified: bool        # quote occurs on page and contains value
 
 class HardwareSpec(BaseModel):
     robot: str
