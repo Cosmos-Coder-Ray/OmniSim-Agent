@@ -15,6 +15,9 @@ data/llm_usage.sqlite3
 data/llm_calls.jsonl
 data/knowledge_calls.jsonl
 data/tavily_cache/
+data/dev/
+data/*llm*cache/
+!data/benchmark_llm_cache/
 .DS_Store
 Thumbs.db
 node_modules/
