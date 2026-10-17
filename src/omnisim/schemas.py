@@ -78,6 +78,22 @@ class HardwareSpec(BaseModel):
     error_taxonomy: list[Evidence]
 
 
+class Mismatch(BaseModel):
+    joint: int = Field(ge=0)
+    field: Literal["torque", "velocity", "lower", "upper"]
+    urdf: float
+    doc: float
+    source_url: str
+    sim_more_permissive: bool
+
+
+class ErrorMapping(BaseModel):
+    kind: FailureKind
+    real_error_name: str | None = None
+    evidence: Evidence | None = None
+    confidence: Literal["low", "medium", "high"] | None = None
+
+
 class SafeEnvelope(BaseModel):
     robot: str
     version: str

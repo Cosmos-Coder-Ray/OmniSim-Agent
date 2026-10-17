@@ -27,5 +27,6 @@
 
 ## Phase 5
 
-- Next: implement the Tavily knowledge agent, evidence verifier, and cache with the Phase 5 prompt and preconditions.
-- Blockers: none.
+- Implemented: cached manufacturer search and per-URL extraction, quote-and-value verification, verified-only URDF comparison, advisory error mapping, usage records, and the spec demo.
+- Next: live `spec_demo.py` run after the cache is populated and credentials are configured.
+- Blockers: live Tavily and Nebius calls have not been made; no live specification evidence has been fetched.
