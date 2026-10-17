@@ -110,6 +110,14 @@ def test_llm_fraction_zero_makes_no_llm_call() -> None:
     assert adversary.last_origins == ["explore"] * 3
 
 
+def test_odd_fallback_slot_goes_to_exploit() -> None:
+    adversary = NemotronAdversary(seed=14, llm_fraction=0.0)
+
+    adversary.propose([_trial(ScenarioParams())], scenario_bounds(), 3)
+
+    assert adversary.last_origins == ["exploit", "exploit", "explore"]
+
+
 def test_adversary_falls_back_on_llm_error_and_caps_hypothesis() -> None:
     response = AdversaryResponse(hypothesis="x" * 600, scenarios=[{"push_force_n": 4}])
     adversary = NemotronAdversary(seed=3, chat_json=_chat(response))

@@ -66,6 +66,13 @@ def test_cache_hit_replays_parsed_result_and_usage_without_chat_call(tmp_path: P
     entry_text = next(tmp_path.glob("*.json")).read_text(encoding="utf-8")
     assert "system prompt secret" not in entry_text
     assert "user prompt secret" not in entry_text
+    assert set(json.loads(entry_text)) == {
+        "parsed",
+        "prompt_hash",
+        "resolved_model_id",
+        "salt",
+        "usage",
+    }
     assert cache_size(tmp_path) > 0
 
 

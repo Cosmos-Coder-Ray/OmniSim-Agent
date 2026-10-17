@@ -16,7 +16,6 @@ from omnisim.llm.budget import Usage
 from omnisim.llm.models import Role
 
 log = logging.getLogger(__name__)
-SCHEMA_VERSION = 1
 T = TypeVar("T", bound=BaseModel)
 ChatJSON = Callable[..., tuple[Any, Usage]]
 ModelResolver = Callable[[Role], str]
@@ -51,7 +50,6 @@ def _read_entry(path: Path) -> dict[str, Any] | None:
         return None
     if (
         not isinstance(row, dict)
-        or row.get("schema_version") != SCHEMA_VERSION
         or not isinstance(row.get("resolved_model_id"), str)
         or not isinstance(row.get("salt"), str)
         or not isinstance(row.get("prompt_hash"), str)
@@ -236,7 +234,6 @@ class BenchmarkLLMCache:
         _atomic_write(
             path,
             {
-                "schema_version": SCHEMA_VERSION,
                 "resolved_model_id": model_id,
                 "salt": self.salt,
                 "prompt_hash": self.prompt_hash,

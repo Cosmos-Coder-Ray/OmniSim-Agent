@@ -59,32 +59,32 @@ class NemotronAdversary(Strategy):
         self.last_origins: list[ProposalOrigin] = []
         self.last_fallback = False
         self.last_usage = Usage()
+        self.last_cache_hit = False
+        self.last_call_made = False
         self.resolved_model_id: str | None = None
 
     def _request(
         self, history: list[Trial], bounds: Mapping[str, tuple[float, float]], k: int
     ) -> tuple[str, list[dict[str, Any]]]:
         prompt = self.prompt_path.read_text(encoding="utf-8")
+        successful = [(trial, trial.result) for trial in history if trial.result is not None]
         recent = [
             {
                 "params": trial.params.model_dump(exclude={"seed"}),
-                "risk": trial.result.risk,
+                "risk": result.risk,
                 "failures": [
-                    {"kind": event.kind, "joint": event.joint} for event in trial.result.failures
+                    {"kind": event.kind, "joint": event.joint} for event in result.failures
                 ],
             }
-            for trial in history[-12:]
-            if trial.result is not None
+            for trial, result in successful[-12:]
         ]
         counts: Counter[tuple[str, int | None]] = Counter()
         best_risk: dict[tuple[str, int | None], float] = {}
-        for trial in history:
-            if trial.result is None:
-                continue
-            for event in trial.result.failures:
+        for trial, result in successful:
+            for event in result.failures:
                 key = (event.kind, event.joint)
                 counts[key] += 1
-                best_risk[key] = max(best_risk.get(key, 0.0), trial.result.risk)
+                best_risk[key] = max(best_risk.get(key, 0.0), result.risk)
         user = json.dumps(
             {
                 "bounds": bounds,
@@ -117,6 +117,9 @@ class NemotronAdversary(Strategy):
             max_tokens=4096,
         )
         self.last_usage = usage
+        self.last_cache_hit = bool(getattr(self._chat_json, "last_cache_hit", False))
+        self.last_call_made = True
+        self.resolved_model_id = getattr(self._chat_json, "last_model_id", None)
         return response.hypothesis[:400], response.scenarios
 
     @staticmethod
@@ -190,6 +193,8 @@ class NemotronAdversary(Strategy):
             self.last_origins = []
             self.last_fallback = False
             self.last_usage = Usage()
+            self.last_cache_hit = False
+            self.last_call_made = False
             return "no proposals requested", []
 
         requested_llm = min(k, int(k * self.llm_fraction))
@@ -197,6 +202,9 @@ class NemotronAdversary(Strategy):
         raw_scenarios: list[dict[str, Any]] = []
         self.last_fallback = False
         self.last_usage = Usage()
+        self.last_cache_hit = False
+        self.last_call_made = False
+        self.resolved_model_id = None
         if requested_llm:
             try:
                 hypothesis, raw_scenarios = self._request(history, bounds, requested_llm)

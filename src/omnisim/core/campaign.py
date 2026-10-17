@@ -15,7 +15,9 @@ BatchCallback = Callable[[int, str, list[ProposalOrigin], list[Trial]], None]
 
 def _sim_seed(benchmark_seed: int, sim_index: int) -> int:
     return int(
-        np.random.SeedSequence([benchmark_seed, sim_index]).generate_state(1, dtype=np.uint32)[0]
+        np.random.SeedSequence([benchmark_seed % (2**32), sim_index]).generate_state(
+            1, dtype=np.uint32
+        )[0]
     )
 
 
