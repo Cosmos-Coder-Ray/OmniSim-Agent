@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -92,7 +93,26 @@ def sample_models() -> list[tuple[type[BaseModel], BaseModel]]:
         strategy="nemotron",
         seed=17,
         episodes=[episode],
-        events=[CampaignEvent(type="campaign_started", data={"seed": 17})],
+        events=[
+            CampaignEvent(
+                seq=1,
+                ts=datetime(2026, 10, 18, tzinfo=UTC),
+                type="campaign_started",
+                data={
+                    "run_id": "schema-test",
+                    "robot": hardware.robot,
+                    "strategy": "random",
+                    "seed": 17,
+                    "budget": 1,
+                    "started_at": datetime(2026, 10, 18, tzinfo=UTC),
+                    "baseline_risk": None,
+                    "baseline_max_tau_ratio": None,
+                    "baseline_max_vel_ratio": None,
+                    "baseline_final_ee_error_m": None,
+                    "baseline_error": None,
+                },
+            )
+        ],
         source="mock",
     )
     benchmark = BenchmarkResult.model_validate(

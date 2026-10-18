@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -123,9 +124,115 @@ class Replay(BaseModel):
     source: Literal["live", "recorded", "mock"]
 
 
+class CampaignStartedData(BaseModel):
+    run_id: str
+    robot: str
+    strategy: StrategyName
+    seed: int
+    budget: int
+    started_at: datetime
+    baseline_risk: float | None
+    baseline_max_tau_ratio: float | None
+    baseline_max_vel_ratio: float | None
+    baseline_final_ee_error_m: float | None
+    baseline_error: str | None
+
+
+class HypothesisData(BaseModel):
+    batch_index: int
+    hypothesis: str
+    origins: list[Literal["llm", "exploit", "explore", "random", "cma"]]
+    params: list[ScenarioParams]
+
+
+class ScenarioBatchData(BaseModel):
+    batch_index: int
+    episode_ids: list[str]
+    sims_used: int
+
+
+class EpisodeDoneData(BaseModel):
+    episode_id: str
+    ok: bool
+    risk: float | None = None
+    failure_kinds: list[FailureKind] = Field(default_factory=list)
+    duration_s: float | None = None
+    ticks: int | None = None
+    control_hz: int | None = None
+    error: str | None = None
+
+
+class FailureFoundData(BaseModel):
+    episode_id: str
+    cluster_id: str
+    kind: FailureKind
+    joint: int | None
+    risk: float
+    severity: float
+
+
+class ClusterUpdatedData(BaseModel):
+    cluster_count: int
+    base_key_count: int
+    cluster_ids: list[str]
+
+
+class SpecReadyData(BaseModel):
+    ok: bool
+    robot: str | None = None
+    mismatch_count: int = 0
+    error: str | None = None
+
+
+class ShrinkDoneData(BaseModel):
+    cluster_id: str
+    episode_id: str
+    sims_used: int
+    converged: bool
+    trajectory_path: str | None = None
+
+
+class DiagnosisReadyData(BaseModel):
+    cluster_id: str
+    ok: bool
+    confidence: Literal["low", "medium", "high"] | None = None
+    error: str | None = None
+
+
+class CampaignDoneData(BaseModel):
+    status: Literal["completed", "cancelled", "error", "token_cap", "no_failures_found"]
+    stop_reason: Literal["budget", "clusters", "token_cap", "none"]
+    sims_used: int
+    shrink_sims: int
+    clusters: int
+    duration_s: float
+
+
+_CAMPAIGN_EVENT_DATA: dict[str, type[BaseModel]] = {
+    "campaign_started": CampaignStartedData,
+    "hypothesis": HypothesisData,
+    "scenario_batch": ScenarioBatchData,
+    "episode_done": EpisodeDoneData,
+    "failure_found": FailureFoundData,
+    "cluster_updated": ClusterUpdatedData,
+    "spec_ready": SpecReadyData,
+    "shrink_done": ShrinkDoneData,
+    "diagnosis_ready": DiagnosisReadyData,
+    "campaign_done": CampaignDoneData,
+}
+
+
 class CampaignEvent(BaseModel):
+    seq: int = Field(ge=1)
+    ts: datetime
     type: CampaignEventType
     data: dict
+
+    @model_validator(mode="after")
+    def validate_event_data(self) -> Self:
+        payload = _CAMPAIGN_EVENT_DATA[self.type].model_validate(self.data)
+        object.__setattr__(self, "data", payload.model_dump(mode="json"))
+        return self
 
 
 class CampaignResult(BaseModel):
