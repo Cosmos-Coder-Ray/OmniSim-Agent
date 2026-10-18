@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,7 @@ from omnisim.schemas import (
 
 ROOT = Path(__file__).resolve().parents[1]
 MOCK_DIR = ROOT / "web" / "public" / "mock"
+MOCK_TS = datetime(2026, 10, 18, tzinfo=UTC)
 FAILURE_KINDS = (
     "torque_saturation",
     "joint_limit",
@@ -263,23 +265,129 @@ def generate() -> None:
         seed=17017,
         episodes=episodes,
         events=[
-            CampaignEvent(type="campaign_started", data={"campaign_id": "mock_campaign_01"}),
-            CampaignEvent(type="hypothesis", data={"episode_id": "ep_017", "label": "[mock]"}),
-            CampaignEvent(type="scenario_batch", data={"episode_ids": ["ep_016", "ep_017"]}),
             CampaignEvent(
-                type="episode_done",
-                data={"episode_id": "ep_016", "ticks": 360, "control_hz": 60, "duration_s": 6.0},
+                seq=1,
+                ts=MOCK_TS,
+                type="campaign_started",
+                data={
+                    "run_id": "mock_campaign_01",
+                    "robot": hardware.robot,
+                    "strategy": "nemotron",
+                    "seed": 17017,
+                    "budget": 2,
+                    "started_at": MOCK_TS,
+                    "baseline_risk": 0.18,
+                    "baseline_max_tau_ratio": 0.62,
+                    "baseline_max_vel_ratio": 0.57,
+                    "baseline_final_ee_error_m": 0.012,
+                    "baseline_error": None,
+                },
             ),
             CampaignEvent(
-                type="episode_done",
-                data={"episode_id": "ep_017", "ticks": 360, "control_hz": 60, "duration_s": 6.0},
+                seq=2,
+                ts=MOCK_TS,
+                type="hypothesis",
+                data={
+                    "batch_index": 0,
+                    "hypothesis": "[mock] test a payload and lateral push",
+                    "origins": ["random", "random"],
+                    "params": [episodes[0].params, episodes[1].params],
+                },
             ),
-            CampaignEvent(type="failure_found", data={"episode_id": "ep_017", "risk": 1.24}),
-            CampaignEvent(type="cluster_updated", data={"failure_count": 2}),
-            CampaignEvent(type="spec_ready", data={"robot": hardware.robot}),
-            CampaignEvent(type="shrink_done", data={"episode_id": "ep_017", "label": "[mock]"}),
-            CampaignEvent(type="diagnosis_ready", data={"label": "[mock]"}),
-            CampaignEvent(type="campaign_done", data={"episode_count": 2}),
+            CampaignEvent(
+                seq=3,
+                ts=MOCK_TS,
+                type="scenario_batch",
+                data={"batch_index": 0, "episode_ids": ["ep_016", "ep_017"], "sims_used": 2},
+            ),
+            CampaignEvent(
+                seq=4,
+                ts=MOCK_TS,
+                type="episode_done",
+                data={
+                    "episode_id": "ep_016",
+                    "ok": True,
+                    "risk": 0.18,
+                    "failure_kinds": [],
+                    "ticks": 360,
+                    "control_hz": 60,
+                    "duration_s": 6.0,
+                },
+            ),
+            CampaignEvent(
+                seq=5,
+                ts=MOCK_TS,
+                type="episode_done",
+                data={
+                    "episode_id": "ep_017",
+                    "ok": True,
+                    "risk": 1.24,
+                    "failure_kinds": ["tracking_error"],
+                    "ticks": 360,
+                    "control_hz": 60,
+                    "duration_s": 6.0,
+                },
+            ),
+            CampaignEvent(
+                seq=6,
+                ts=MOCK_TS,
+                type="failure_found",
+                data={
+                    "episode_id": "ep_017",
+                    "cluster_id": "tracking_error:global",
+                    "kind": "tracking_error",
+                    "joint": None,
+                    "risk": 1.24,
+                    "severity": 1.0,
+                },
+            ),
+            CampaignEvent(
+                seq=7,
+                ts=MOCK_TS,
+                type="cluster_updated",
+                data={
+                    "cluster_count": 1,
+                    "base_key_count": 1,
+                    "cluster_ids": ["tracking_error:global"],
+                },
+            ),
+            CampaignEvent(
+                seq=8,
+                ts=MOCK_TS,
+                type="spec_ready",
+                data={"ok": True, "robot": hardware.robot, "mismatch_count": 0},
+            ),
+            CampaignEvent(
+                seq=9,
+                ts=MOCK_TS,
+                type="shrink_done",
+                data={
+                    "cluster_id": "tracking_error:global",
+                    "episode_id": "shrunk_tracking_error_global",
+                    "sims_used": 10,
+                    "converged": True,
+                    "trajectory_path": "trajectories/shrunk_tracking_error_global.json",
+                },
+            ),
+            CampaignEvent(
+                seq=10,
+                ts=MOCK_TS,
+                type="diagnosis_ready",
+                data={"cluster_id": "tracking_error:global", "ok": True, "confidence": "medium"},
+            ),
+            CampaignEvent(
+                seq=11,
+                ts=MOCK_TS,
+                type="campaign_done",
+                data={
+                    "status": "completed",
+                    "stop_reason": "budget",
+                    "sims_used": 2,
+                    "shrink_sims": 10,
+                    "clusters": 1,
+                    "duration_s": 12.5,
+                },
+            ),
         ],
         source="mock",
     )

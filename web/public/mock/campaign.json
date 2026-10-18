@@ -74,81 +74,179 @@
   ],
   "events": [
     {
+      "seq": 1,
+      "ts": "2026-10-18T00:00:00Z",
       "type": "campaign_started",
       "data": {
-        "campaign_id": "mock_campaign_01"
+        "run_id": "mock_campaign_01",
+        "robot": "Franka Emika Panda",
+        "strategy": "nemotron",
+        "seed": 17017,
+        "budget": 2,
+        "started_at": "2026-10-18T00:00:00Z",
+        "baseline_risk": 0.18,
+        "baseline_max_tau_ratio": 0.62,
+        "baseline_max_vel_ratio": 0.57,
+        "baseline_final_ee_error_m": 0.012,
+        "baseline_error": null
       }
     },
     {
+      "seq": 2,
+      "ts": "2026-10-18T00:00:00Z",
       "type": "hypothesis",
       "data": {
-        "episode_id": "ep_017",
-        "label": "[mock]"
-      }
-    },
-    {
-      "type": "scenario_batch",
-      "data": {
-        "episode_ids": [
-          "ep_016",
-          "ep_017"
+        "batch_index": 0,
+        "hypothesis": "[mock] test a payload and lateral push",
+        "origins": [
+          "random",
+          "random"
+        ],
+        "params": [
+          {
+            "payload_kg": 0.0,
+            "link_mass_scale": 1.0,
+            "joint_damping": 0.0,
+            "latency_ticks": 0,
+            "sensor_noise_rad": 0.0,
+            "torque_limit_scale": 1.0,
+            "speed_scale": 1.0,
+            "kp_scale": 1.0,
+            "push_force_n": 0.0,
+            "push_time_s": 2.0,
+            "seed": 17016
+          },
+          {
+            "payload_kg": 1.1,
+            "link_mass_scale": 1.12,
+            "joint_damping": 0.45,
+            "latency_ticks": 4,
+            "sensor_noise_rad": 0.006,
+            "torque_limit_scale": 0.72,
+            "speed_scale": 0.82,
+            "kp_scale": 0.9,
+            "push_force_n": 8.0,
+            "push_time_s": 2.0,
+            "seed": 17017
+          }
         ]
       }
     },
     {
+      "seq": 3,
+      "ts": "2026-10-18T00:00:00Z",
+      "type": "scenario_batch",
+      "data": {
+        "batch_index": 0,
+        "episode_ids": [
+          "ep_016",
+          "ep_017"
+        ],
+        "sims_used": 2
+      }
+    },
+    {
+      "seq": 4,
+      "ts": "2026-10-18T00:00:00Z",
       "type": "episode_done",
       "data": {
         "episode_id": "ep_016",
+        "ok": true,
+        "risk": 0.18,
+        "failure_kinds": [],
+        "duration_s": 6.0,
         "ticks": 360,
         "control_hz": 60,
-        "duration_s": 6.0
+        "error": null
       }
     },
     {
+      "seq": 5,
+      "ts": "2026-10-18T00:00:00Z",
       "type": "episode_done",
       "data": {
         "episode_id": "ep_017",
+        "ok": true,
+        "risk": 1.24,
+        "failure_kinds": [
+          "tracking_error"
+        ],
+        "duration_s": 6.0,
         "ticks": 360,
         "control_hz": 60,
-        "duration_s": 6.0
+        "error": null
       }
     },
     {
+      "seq": 6,
+      "ts": "2026-10-18T00:00:00Z",
       "type": "failure_found",
       "data": {
         "episode_id": "ep_017",
-        "risk": 1.24
+        "cluster_id": "tracking_error:global",
+        "kind": "tracking_error",
+        "joint": null,
+        "risk": 1.24,
+        "severity": 1.0
       }
     },
     {
+      "seq": 7,
+      "ts": "2026-10-18T00:00:00Z",
       "type": "cluster_updated",
       "data": {
-        "failure_count": 2
+        "cluster_count": 1,
+        "base_key_count": 1,
+        "cluster_ids": [
+          "tracking_error:global"
+        ]
       }
     },
     {
+      "seq": 8,
+      "ts": "2026-10-18T00:00:00Z",
       "type": "spec_ready",
       "data": {
-        "robot": "Franka Emika Panda"
+        "ok": true,
+        "robot": "Franka Emika Panda",
+        "mismatch_count": 0,
+        "error": null
       }
     },
     {
+      "seq": 9,
+      "ts": "2026-10-18T00:00:00Z",
       "type": "shrink_done",
       "data": {
-        "episode_id": "ep_017",
-        "label": "[mock]"
+        "cluster_id": "tracking_error:global",
+        "episode_id": "shrunk_tracking_error_global",
+        "sims_used": 10,
+        "converged": true,
+        "trajectory_path": "trajectories/shrunk_tracking_error_global.json"
       }
     },
     {
+      "seq": 10,
+      "ts": "2026-10-18T00:00:00Z",
       "type": "diagnosis_ready",
       "data": {
-        "label": "[mock]"
+        "cluster_id": "tracking_error:global",
+        "ok": true,
+        "confidence": "medium",
+        "error": null
       }
     },
     {
+      "seq": 11,
+      "ts": "2026-10-18T00:00:00Z",
       "type": "campaign_done",
       "data": {
-        "episode_count": 2
+        "status": "completed",
+        "stop_reason": "budget",
+        "sims_used": 2,
+        "shrink_sims": 10,
+        "clusters": 1,
+        "duration_s": 12.5
       }
     }
   ],

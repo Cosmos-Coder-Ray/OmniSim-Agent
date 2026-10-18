@@ -37,3 +37,10 @@
 - Verified: `make check` passes; the offline random plus CMA-ES integration case passes with one seed, budget 8, and two workers.
 - Next: review the reporting artifacts and run the Nebius benchmark when credentials and token budget are ready.
 - Blockers: no live Nebius run was made; live Nemotron model resolution, cache replay against a real response, and the reporting benchmark remain unverified.
+
+## Phase 7: campaign orchestration
+
+- Implemented: deterministic failure clustering, bounded scenario shrinking, typed event streaming and persistence, campaign status/stop-reason reporting, evidence-grounded diagnosis, the campaign CLI, and recorded demo-run export.
+- Verified: `make check` passes after each of the five commit groups. The separate budget-8 random campaign integration test passed with the real headless PyBullet simulator and injected spec/LLM functions. Demo-run tests validate source rewriting and overwrite protection.
+- Next: run `python scripts/run_campaign.py --budget 40` when the user is ready to make the live campaign calls.
+- Blockers: no live Nebius or Tavily call was made; the campaign has not been run against live LLM or knowledge services.

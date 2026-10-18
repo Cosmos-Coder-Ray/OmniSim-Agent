@@ -1,16 +1,44 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from pathlib import Path
+from time import perf_counter
+from typing import Protocol
 
 import numpy as np
 
 from omnisim.agents.baselines import ProposalOrigin, Strategy, Trial, scenario_bounds
-from omnisim.schemas import EpisodeResult
+from omnisim.schemas import EpisodeResult, ScenarioParams
 from omnisim.sim.detectors import DetectorConfig
 from omnisim.sim.limits import UrdfLimits
-from omnisim.sim.runner import EpisodeRunner
+from omnisim.sim.runner import EpisodeError
 
 BatchCallback = Callable[[int, str, list[ProposalOrigin], list[Trial]], None]
+StopPredicate = Callable[[list[Trial]], bool]
+
+
+class BatchRunner(Protocol):
+    def run_batch(
+        self,
+        params_list: list[ScenarioParams],
+        limits: UrdfLimits,
+        *,
+        workers: int,
+        run_dir: Path | None = None,
+        cfg: DetectorConfig = DetectorConfig(),
+    ) -> list[EpisodeResult | EpisodeError]: ...
+
+    def close(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class TrialBatch:
+    index: int
+    hypothesis: str
+    origins: list[ProposalOrigin]
+    trials: list[Trial]
+    duration_s: float
 
 
 def _sim_seed(benchmark_seed: int, sim_index: int) -> int:
@@ -21,9 +49,9 @@ def _sim_seed(benchmark_seed: int, sim_index: int) -> int:
     )
 
 
-def run_trials(
+def iter_trial_batches(
     strategy: Strategy,
-    runner: EpisodeRunner,
+    runner: BatchRunner,
     limits: UrdfLimits,
     *,
     benchmark_seed: int,
@@ -31,7 +59,9 @@ def run_trials(
     workers: int,
     cfg: DetectorConfig = DetectorConfig(),
     on_batch: BatchCallback | None = None,
-) -> list[Trial]:
+    stop_predicate: StopPredicate | None = None,
+    run_dir: Path | None = None,
+) -> Iterator[TrialBatch]:
     if budget <= 0:
         raise ValueError("budget must be positive")
     if strategy.batch_size <= 0:
@@ -50,7 +80,9 @@ def run_trials(
             params.model_copy(update={"seed": _sim_seed(benchmark_seed, sim_start + i)})
             for i, params in enumerate(proposals)
         ]
-        results = runner.run_batch(params_list, limits, workers=workers, run_dir=None, cfg=cfg)
+        batch_started = perf_counter()
+        results = runner.run_batch(params_list, limits, workers=workers, run_dir=run_dir, cfg=cfg)
+        duration_s = perf_counter() - batch_started
         trials = [
             Trial(
                 params=params,
@@ -66,5 +98,34 @@ def run_trials(
         if on_batch is not None:
             on_batch(batch_index, hypothesis, strategy.last_origins.copy(), trials)
         history.extend(trials)
+        yield TrialBatch(batch_index, hypothesis, strategy.last_origins.copy(), trials, duration_s)
         batch_index += 1
-    return history
+        if stop_predicate is not None and stop_predicate(history):
+            break
+
+
+def run_trials(
+    strategy: Strategy,
+    runner: BatchRunner,
+    limits: UrdfLimits,
+    *,
+    benchmark_seed: int,
+    budget: int,
+    workers: int,
+    cfg: DetectorConfig = DetectorConfig(),
+    on_batch: BatchCallback | None = None,
+) -> list[Trial]:
+    return [
+        trial
+        for batch in iter_trial_batches(
+            strategy,
+            runner,
+            limits,
+            benchmark_seed=benchmark_seed,
+            budget=budget,
+            workers=workers,
+            cfg=cfg,
+            on_batch=on_batch,
+        )
+        for trial in batch.trials
+    ]
