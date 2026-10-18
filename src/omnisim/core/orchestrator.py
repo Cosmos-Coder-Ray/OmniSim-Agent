@@ -13,6 +13,7 @@ from omnisim.agents.diagnostician import diagnose
 from omnisim.agents.factory import make_strategy
 from omnisim.core.campaign import BatchRunner, iter_trial_batches
 from omnisim.core.clustering import ClusteringResult, ClusterSummary, atlas_points, cluster_episodes
+from omnisim.core.shield import EpisodeBlocked
 from omnisim.core.shrinker import ShrinkResult, shrink
 from omnisim.knowledge.compare import compare_with_urdf
 from omnisim.knowledge.tavily_agent import (
@@ -42,7 +43,7 @@ from omnisim.sim.runner import EpisodeRunner, run_episode
 
 RUNS_DIR = Path(__file__).resolve().parents[3] / "runs"
 Clock = Callable[[], datetime]
-EpisodeFn = Callable[..., EpisodeResult]
+EpisodeFn = Callable[..., EpisodeResult | EpisodeBlocked]
 BuildSpecFn = Callable[..., HardwareSpec]
 CompareFn = Callable[..., tuple[list[Mismatch], list]]
 MappingFn = Callable[..., dict[FailureKind, ErrorMapping]]
@@ -106,6 +107,12 @@ def _relative_result(result: EpisodeResult, run_dir: Path) -> EpisodeResult:
     if path.is_absolute():
         path = path.resolve().relative_to(run_dir.resolve())
     return result.model_copy(update={"trajectory_path": path.as_posix()})
+
+
+def _episode_result(result: EpisodeResult | EpisodeBlocked) -> EpisodeResult:
+    if isinstance(result, EpisodeBlocked):
+        raise RuntimeError("campaign episode unexpectedly returned EpisodeBlocked")
+    return result
 
 
 def campaign_events(
@@ -269,12 +276,14 @@ def campaign_events(
         nominal: EpisodeResult | None = None
         nominal_error: str | None = None
         try:
-            nominal = run_episode_fn(
-                ScenarioParams(seed=seed),
-                active_limits,
-                episode_id="nominal",
-                run_dir=trajectory_dir,
-                cfg=cfg,
+            nominal = _episode_result(
+                run_episode_fn(
+                    ScenarioParams(seed=seed),
+                    active_limits,
+                    episode_id="nominal",
+                    run_dir=trajectory_dir,
+                    cfg=cfg,
+                )
             )
             nominal = _relative_result(nominal, run_dir)
             _write_json(run_dir / "nominal.json", nominal.model_dump(mode="json"))
@@ -433,12 +442,14 @@ def campaign_events(
             )
 
             def evaluate(candidate: ScenarioParams) -> EpisodeResult:
-                return run_episode_fn(
-                    candidate,
-                    active_limits,
-                    episode_id=f"shrink_{_safe_cluster_name(cluster.cluster_id)}",
-                    run_dir=None,
-                    cfg=cfg,
+                return _episode_result(
+                    run_episode_fn(
+                        candidate,
+                        active_limits,
+                        episode_id=f"shrink_{_safe_cluster_name(cluster.cluster_id)}",
+                        run_dir=None,
+                        cfg=cfg,
+                    )
                 )
 
             shrunk = shrink(
@@ -447,12 +458,14 @@ def campaign_events(
                 evaluate,
                 cap=25,
             )
-            repro = run_episode_fn(
-                shrunk.minimal,
-                active_limits,
-                episode_id=f"shrunk_{_safe_cluster_name(cluster.cluster_id)}",
-                run_dir=trajectory_dir,
-                cfg=cfg,
+            repro = _episode_result(
+                run_episode_fn(
+                    shrunk.minimal,
+                    active_limits,
+                    episode_id=f"shrunk_{_safe_cluster_name(cluster.cluster_id)}",
+                    run_dir=trajectory_dir,
+                    cfg=cfg,
+                )
             )
             repro = _relative_result(repro, run_dir)
             shrinks[cluster.cluster_id] = ShrinkResult(

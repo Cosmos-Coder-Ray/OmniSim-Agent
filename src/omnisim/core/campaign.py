@@ -9,6 +9,7 @@ from typing import Protocol
 import numpy as np
 
 from omnisim.agents.baselines import ProposalOrigin, Strategy, Trial, scenario_bounds
+from omnisim.core.shield import EpisodeBlocked
 from omnisim.schemas import EpisodeResult, ScenarioParams
 from omnisim.sim.detectors import DetectorConfig
 from omnisim.sim.limits import UrdfLimits
@@ -27,7 +28,7 @@ class BatchRunner(Protocol):
         workers: int,
         run_dir: Path | None = None,
         cfg: DetectorConfig = DetectorConfig(),
-    ) -> list[EpisodeResult | EpisodeError]: ...
+    ) -> list[EpisodeResult | EpisodeError | EpisodeBlocked]: ...
 
     def close(self) -> None: ...
 
@@ -82,6 +83,8 @@ def iter_trial_batches(
         ]
         batch_started = perf_counter()
         results = runner.run_batch(params_list, limits, workers=workers, run_dir=run_dir, cfg=cfg)
+        if any(isinstance(result, EpisodeBlocked) for result in results):
+            raise RuntimeError("campaign runner unexpectedly returned a blocked episode")
         duration_s = perf_counter() - batch_started
         trials = [
             Trial(

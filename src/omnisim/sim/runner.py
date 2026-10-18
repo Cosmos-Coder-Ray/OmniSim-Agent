@@ -8,11 +8,11 @@ from math import isfinite
 from multiprocessing.pool import Pool
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Protocol
 
 import pybullet as p
 import pybullet_data
 
+from omnisim.core.shield import EpisodeBlocked, Shield
 from omnisim.schemas import (
     EpisodeResult,
     FailureEvent,
@@ -24,11 +24,6 @@ from omnisim.sim.detectors import DetectorConfig, detect, violation_masks
 from omnisim.sim.limits import UrdfLimits
 from omnisim.sim.panda_env import PandaSim
 from omnisim.sim.telemetry import EpisodeTelemetry
-
-
-class Shield(Protocol):
-    def apply(self, params: ScenarioParams) -> ScenarioParams: ...
-
 
 _PARENT_TIMEOUT_GRACE_S = 1.0
 
@@ -97,14 +92,18 @@ def run_episode(
     run_dir: Path | None = None,
     cfg: DetectorConfig = DetectorConfig(),
     timeout_s: float = 30.0,
-) -> EpisodeResult:
+) -> EpisodeResult | EpisodeBlocked:
     if not isfinite(timeout_s) or timeout_s <= 0:
         raise ValueError("timeout_s must be positive")
 
     original_params = params.model_copy(deep=True)
-    sim_params = (
-        shield.apply(params.model_copy(deep=True)) if shield is not None else original_params
-    )
+    if shield is None:
+        sim_params = original_params
+    else:
+        decision = shield.decide(original_params.model_copy(deep=True))
+        if decision.rejected:
+            return EpisodeBlocked(episode_id, original_params, decision.reasons)
+        sim_params = decision.params
     deadline = time.monotonic() + timeout_s
     with PandaSim(sim_params, limits.effort, limits.velocity) as sim:
         telemetry = sim.run(deadline)
@@ -150,7 +149,7 @@ def _run_worker(
     run_dir: Path | None,
     cfg: DetectorConfig,
     timeout_s: float,
-) -> EpisodeResult | EpisodeError:
+) -> EpisodeResult | EpisodeError | EpisodeBlocked:
     try:
         return run_episode(
             params,
@@ -213,7 +212,7 @@ class EpisodeRunner:
         run_dir: Path | None = None,
         cfg: DetectorConfig = DetectorConfig(),
         timeout_s: float = 30.0,
-    ) -> list[EpisodeResult | EpisodeError]:
+    ) -> list[EpisodeResult | EpisodeError | EpisodeBlocked]:
         if self._closed:
             raise RuntimeError("episode runner is closed")
         if not isfinite(timeout_s) or timeout_s <= 0:
@@ -224,7 +223,7 @@ class EpisodeRunner:
         episode_ids = [f"ep_{self._episode_count + i:03d}" for i in range(len(params_list))]
         self._episode_count += len(params_list)
         if workers <= 1:
-            serial_results: list[EpisodeResult | EpisodeError] = []
+            serial_results: list[EpisodeResult | EpisodeError | EpisodeBlocked] = []
             for params, episode_id in zip(params_list, episode_ids, strict=True):
                 try:
                     result = run_episode(
@@ -244,8 +243,10 @@ class EpisodeRunner:
         self._ensure_pool(workers)
         assert self._pool is not None
         pool = self._pool
-        completion_queue: Queue[tuple[int, EpisodeResult | EpisodeError]] = Queue()
-        results: list[EpisodeResult | EpisodeError | None] = [None] * len(params_list)
+        completion_queue: Queue[tuple[int, EpisodeResult | EpisodeError | EpisodeBlocked]] = Queue()
+        results: list[EpisodeResult | EpisodeError | EpisodeBlocked | None] = [None] * len(
+            params_list
+        )
         in_flight: dict[int, float] = {}
         next_index = 0
 
@@ -254,7 +255,7 @@ class EpisodeRunner:
             episode_id = episode_ids[index]
             in_flight[index] = time.monotonic()
 
-            def on_success(result: EpisodeResult | EpisodeError) -> None:
+            def on_success(result: EpisodeResult | EpisodeError | EpisodeBlocked) -> None:
                 completion_queue.put((index, result))
 
             def on_error(error: BaseException) -> None:
@@ -304,7 +305,7 @@ class EpisodeRunner:
 
         if any(result is None for result in results):
             raise RuntimeError("batch ended without a result for every episode")
-        completed_results: list[EpisodeResult | EpisodeError] = []
+        completed_results: list[EpisodeResult | EpisodeError | EpisodeBlocked] = []
         for result in results:
             if result is None:
                 raise RuntimeError("batch ended without a result for every episode")

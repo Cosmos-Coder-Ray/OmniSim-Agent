@@ -40,6 +40,10 @@ def motion_duration(speed_scale: float) -> float:
     return BASE_MOTION_SECONDS / speed_scale
 
 
+def planned_duration_s(speed_scale: float) -> float:
+    return motion_duration(speed_scale)
+
+
 class CommandDelay:
     def __init__(self, latency_ticks: int) -> None:
         home = np.asarray(HOME_Q, dtype=np.float64)

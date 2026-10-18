@@ -2,6 +2,7 @@ from typing import Final
 
 HOME_Q: Final[tuple[float, ...]] = (0.0, -0.4, 0.0, -2.2, 0.0, 2.0, 0.785)
 CONTROL_HZ: Final = 60
+TICK_MS: Final = 1000.0 / CONTROL_HZ
 PHYSICS_HZ: Final = 240
 CONTROL_SUBSTEPS: Final = PHYSICS_HZ // CONTROL_HZ
 EPISODE_TICKS: Final = 360
