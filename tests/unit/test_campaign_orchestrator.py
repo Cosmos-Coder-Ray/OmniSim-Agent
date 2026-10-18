@@ -11,6 +11,7 @@ from omnisim.core.orchestrator import campaign_events, run_campaign
 from omnisim.llm.budget import BudgetExceeded
 from omnisim.schemas import (
     CampaignEvent,
+    DiagnosisReport,
     EpisodeResult,
     FailureEvent,
     HardwareSpec,
@@ -98,6 +99,24 @@ def mapping(kinds, spec, *, run_id=None):
     return {}
 
 
+def unused_build_spec(*args, **kwargs):
+    raise AssertionError("precomputed spec should be reused")
+
+
+def diagnose_cluster(cluster, representative, minimal, spec, **kwargs):
+    return DiagnosisReport(
+        cluster_id=cluster.cluster_id,
+        root_cause="measured perturbation increased risk at joint 2",
+        mechanism="the tested motion deviated after the perturbation",
+        numeric_claims=[],
+        real_error_mapping=kwargs.get("mapping"),
+        evidence_refs=[],
+        confidence="low",
+        recommended_constraints=[],
+        corroborating_urls=[],
+    )
+
+
 def run_options(root: Path, runner: FakeRunner, *, budget: int = 4, **options):
     return {
         "robot": "Panda",
@@ -109,8 +128,11 @@ def run_options(root: Path, runner: FakeRunner, *, budget: int = 4, **options):
         "runner": runner,
         "run_episode_fn": nominal_run,
         "spec": fake_spec(),
+        "build_spec_fn": unused_build_spec,
         "compare_fn": compare,
         "mapping_fn": mapping,
+        "known_issues_fn": lambda robot, kind, *, run_id=None: [],
+        "diagnose_fn": diagnose_cluster,
         "limits": fake_limits(),
         "clock": lambda: FIXED_TIME,
         **options,
@@ -176,6 +198,24 @@ def test_cluster_stop_counts_base_keys_and_episode_errors_consume_budget(tmp_pat
         for event in outcome.result.events
     )
     assert done["clusters"] == 1
+
+
+def test_cluster_stop_threshold_counts_base_keys_not_subclusters(tmp_path: Path) -> None:
+    outcome = run_campaign(
+        **run_options(
+            tmp_path,
+            FakeRunner(failures=True),
+            budget=12,
+            stop_after_clusters=2,
+            max_diagnosed=0,
+        )
+    )
+
+    done = outcome.result.events[-1].data
+    assert done["status"] == "completed"
+    assert done["stop_reason"] == "budget"
+    assert done["sims_used"] == 12
+    assert done["clusters"] == 2
 
 
 def test_nominal_failure_emits_started_then_error(tmp_path: Path) -> None:
@@ -288,3 +328,27 @@ def test_shrink_writes_the_minimal_repro_with_a_relative_path(tmp_path: Path) ->
     assert outcome.run_dir.joinpath(*trajectory.split("/")).is_file()
     saved = json.loads((outcome.run_dir / "shrinks.json").read_text(encoding="utf-8"))
     assert saved[cluster_id]["trajectory_path"] == trajectory
+
+
+def test_diagnosis_validation_error_is_reported_without_failing_sim_search(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner(failures=True)
+
+    def invalid_diagnosis(*args, **kwargs):
+        raise ValueError("unsupported numeric claim")
+
+    outcome = run_campaign(
+        **run_options(
+            tmp_path,
+            runner,
+            stop_after_clusters=1,
+            max_diagnosed=1,
+            diagnose_fn=invalid_diagnosis,
+        )
+    )
+
+    ready = next(event for event in outcome.result.events if event.type == "diagnosis_ready")
+    assert ready.data["ok"] is False
+    assert "unsupported numeric claim" in ready.data["error"]
+    assert outcome.result.events[-1].data["status"] == "completed"

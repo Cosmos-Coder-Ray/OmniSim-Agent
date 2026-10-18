@@ -125,3 +125,14 @@ def test_all_nine_params_get_a_bisection_after_all_snaps() -> None:
     for name in _PARAMS:
         low, high = sorted((getattr(nominal, name), getattr(original, name)))
         assert low <= getattr(result.minimal, name) <= high
+
+
+def test_global_cluster_does_not_match_joint_specific_event() -> None:
+    original = ScenarioParams(payload_kg=1.0, seed=17)
+
+    result = shrink(
+        original, ("torque_saturation", None), lambda params: _result(params, True), cap=1
+    )
+
+    assert result.minimal.payload_kg == original.payload_kg
+    assert result.trace == [("payload_kg", 0.0, False)]

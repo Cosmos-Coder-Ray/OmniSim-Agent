@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from omnisim.agents.baselines import Trial
+from omnisim.agents.diagnostician import diagnose
 from omnisim.agents.factory import make_strategy
 from omnisim.core.campaign import BatchRunner, iter_trial_batches
 from omnisim.core.clustering import ClusteringResult, ClusterSummary, atlas_points, cluster_episodes
@@ -17,6 +18,7 @@ from omnisim.knowledge.compare import compare_with_urdf
 from omnisim.knowledge.tavily_agent import (
     build_spec,
     map_failures_to_real_errors,
+    search_known_issues,
 )
 from omnisim.llm.budget import BudgetExceeded
 from omnisim.schemas import (
@@ -24,6 +26,7 @@ from omnisim.schemas import (
     CampaignEvent,
     CampaignEventType,
     CampaignResult,
+    DiagnosisReport,
     EpisodeResult,
     ErrorMapping,
     FailureEvent,
@@ -43,6 +46,8 @@ EpisodeFn = Callable[..., EpisodeResult]
 BuildSpecFn = Callable[..., HardwareSpec]
 CompareFn = Callable[..., tuple[list[Mismatch], list]]
 MappingFn = Callable[..., dict[FailureKind, ErrorMapping]]
+KnownIssuesFn = Callable[..., list[dict[str, str]]]
+DiagnoseFn = Callable[..., DiagnosisReport]
 RunStatus = Literal["completed", "cancelled", "error", "token_cap", "no_failures_found"]
 StopReason = Literal["budget", "clusters", "token_cap", "none"]
 
@@ -56,7 +61,7 @@ class CampaignOutcome:
     mismatches: tuple[Mismatch, ...]
     error_mappings: dict[FailureKind, ErrorMapping]
     shrinks: dict[str, ShrinkResult]
-    diagnoses: dict[str, dict]
+    diagnoses: dict[str, DiagnosisReport]
     error: str | None = None
 
 
@@ -115,6 +120,8 @@ def campaign_events(
     build_spec_fn: BuildSpecFn = build_spec,
     compare_fn: CompareFn = compare_with_urdf,
     mapping_fn: MappingFn = map_failures_to_real_errors,
+    known_issues_fn: KnownIssuesFn = search_known_issues,
+    diagnose_fn: DiagnoseFn = diagnose,
     clock: Clock = _now,
     limits: UrdfLimits | None = None,
     cfg: DetectorConfig = DetectorConfig(),
@@ -144,7 +151,7 @@ def campaign_events(
     mismatches: tuple[Mismatch, ...] = ()
     error_mappings: dict[FailureKind, ErrorMapping] = {}
     shrinks: dict[str, ShrinkResult] = {}
-    diagnoses: dict[str, dict] = {}
+    diagnoses: dict[str, DiagnosisReport] = {}
     seq = 0
     finished = False
     error_message: str | None = None
@@ -243,7 +250,13 @@ def campaign_events(
                 for cluster_id, result in shrinks.items()
             },
         )
-        _write_json(run_dir / "diagnoses.json", {})
+        _write_json(
+            run_dir / "diagnoses.json",
+            {
+                cluster_id: report.model_dump(mode="json")
+                for cluster_id, report in diagnoses.items()
+            },
+        )
 
     try:
         nominal: EpisodeResult | None = None
@@ -489,6 +502,75 @@ def campaign_events(
             error_message = f"{type(error).__name__}: {error}"
             yield emit("spec_ready", {"ok": False, "error": error_message})
             _write_json(run_dir / "spec.json", {"spec": None, "error": error_message})
+
+        for cluster in ranked_clusters[:max_diagnosed]:
+            if status == "token_cap":
+                yield emit(
+                    "diagnosis_ready",
+                    {"cluster_id": cluster.cluster_id, "ok": False, "error": "token cap reached"},
+                )
+                continue
+            if spec_result is None:
+                yield emit(
+                    "diagnosis_ready",
+                    {
+                        "cluster_id": cluster.cluster_id,
+                        "ok": False,
+                        "error": "hardware spec unavailable",
+                    },
+                )
+                continue
+            representative = max(
+                (episode_by_id[episode_id] for episode_id in cluster.episode_ids),
+                key=lambda item: (item.risk, item.episode_id),
+            )
+            minimal = shrinks.get(cluster.cluster_id)
+            try:
+                known_issues = known_issues_fn(robot, cluster.kind, run_id=campaign_id)
+                report = diagnose_fn(
+                    cluster,
+                    representative,
+                    minimal.minimal if minimal is not None else representative.params,
+                    spec_result,
+                    mapping=error_mappings.get(cluster.kind),
+                    known_issues=known_issues,
+                    chat_json=chat_json,
+                    run_id=campaign_id,
+                )
+            except BudgetExceeded as error:
+                status = "token_cap"
+                stop_reason = "token_cap"
+                error_message = str(error)
+                yield emit(
+                    "diagnosis_ready",
+                    {"cluster_id": cluster.cluster_id, "ok": False, "error": error_message},
+                )
+            except Exception as error:
+                yield emit(
+                    "diagnosis_ready",
+                    {
+                        "cluster_id": cluster.cluster_id,
+                        "ok": False,
+                        "error": f"{type(error).__name__}: {error}",
+                    },
+                )
+            else:
+                diagnoses[cluster.cluster_id] = report
+                _write_json(
+                    run_dir / "diagnoses.json",
+                    {
+                        cluster_id: item.model_dump(mode="json")
+                        for cluster_id, item in diagnoses.items()
+                    },
+                )
+                yield emit(
+                    "diagnosis_ready",
+                    {
+                        "cluster_id": cluster.cluster_id,
+                        "ok": True,
+                        "confidence": report.confidence,
+                    },
+                )
 
         if status == "completed":
             status = (

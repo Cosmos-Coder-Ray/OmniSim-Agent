@@ -256,3 +256,24 @@ def test_benchmark_result_rejects_inconsistent_metrics(invalid: str) -> None:
 
     with pytest.raises(ValidationError):
         BenchmarkResult.model_validate(payload)
+
+
+def test_campaign_done_rejects_budget_exhausted_as_a_status() -> None:
+    campaign_event = CampaignEvent.model_construct(
+        seq=1,
+        ts=datetime(2026, 10, 18, tzinfo=UTC),
+        type="campaign_done",
+        data={},
+    )
+    payload = campaign_event.model_dump(mode="python")
+    payload["data"] = {
+        "status": "budget_exhausted",
+        "stop_reason": "budget",
+        "sims_used": 0,
+        "shrink_sims": 0,
+        "clusters": 0,
+        "duration_s": 0.0,
+    }
+
+    with pytest.raises(ValidationError):
+        CampaignEvent.model_validate(payload)

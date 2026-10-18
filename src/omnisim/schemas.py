@@ -124,7 +124,11 @@ class Replay(BaseModel):
     source: Literal["live", "recorded", "mock"]
 
 
-class CampaignStartedData(BaseModel):
+class CampaignPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class CampaignStartedData(CampaignPayload):
     run_id: str
     robot: str
     strategy: StrategyName
@@ -138,20 +142,20 @@ class CampaignStartedData(BaseModel):
     baseline_error: str | None
 
 
-class HypothesisData(BaseModel):
+class HypothesisData(CampaignPayload):
     batch_index: int
     hypothesis: str
     origins: list[Literal["llm", "exploit", "explore", "random", "cma"]]
     params: list[ScenarioParams]
 
 
-class ScenarioBatchData(BaseModel):
+class ScenarioBatchData(CampaignPayload):
     batch_index: int
     episode_ids: list[str]
     sims_used: int
 
 
-class EpisodeDoneData(BaseModel):
+class EpisodeDoneData(CampaignPayload):
     episode_id: str
     ok: bool
     risk: float | None = None
@@ -162,7 +166,7 @@ class EpisodeDoneData(BaseModel):
     error: str | None = None
 
 
-class FailureFoundData(BaseModel):
+class FailureFoundData(CampaignPayload):
     episode_id: str
     cluster_id: str
     kind: FailureKind
@@ -171,20 +175,20 @@ class FailureFoundData(BaseModel):
     severity: float
 
 
-class ClusterUpdatedData(BaseModel):
+class ClusterUpdatedData(CampaignPayload):
     cluster_count: int
     base_key_count: int
     cluster_ids: list[str]
 
 
-class SpecReadyData(BaseModel):
+class SpecReadyData(CampaignPayload):
     ok: bool
     robot: str | None = None
     mismatch_count: int = 0
     error: str | None = None
 
 
-class ShrinkDoneData(BaseModel):
+class ShrinkDoneData(CampaignPayload):
     cluster_id: str
     episode_id: str
     sims_used: int
@@ -192,20 +196,51 @@ class ShrinkDoneData(BaseModel):
     trajectory_path: str | None = None
 
 
-class DiagnosisReadyData(BaseModel):
+class DiagnosisReadyData(CampaignPayload):
     cluster_id: str
     ok: bool
     confidence: Literal["low", "medium", "high"] | None = None
     error: str | None = None
 
 
-class CampaignDoneData(BaseModel):
+class CampaignDoneData(CampaignPayload):
     status: Literal["completed", "cancelled", "error", "token_cap", "no_failures_found"]
     stop_reason: Literal["budget", "clusters", "token_cap", "none"]
     sims_used: int
     shrink_sims: int
     clusters: int
     duration_s: float
+
+
+class NumericClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    basis: str
+    value: float
+
+
+class RecommendedConstraint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parameter: str
+    bound: Literal["max", "min"]
+    value: float
+    basis: str
+
+
+class DiagnosisReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cluster_id: str
+    root_cause: str
+    mechanism: str
+    numeric_claims: list[NumericClaim]
+    real_error_mapping: ErrorMapping | None
+    evidence_refs: list[Evidence]
+    confidence: Literal["low", "medium", "high"]
+    recommended_constraints: list[RecommendedConstraint]
+    corroborating_urls: list[str]
 
 
 _CAMPAIGN_EVENT_DATA: dict[str, type[BaseModel]] = {
@@ -223,6 +258,8 @@ _CAMPAIGN_EVENT_DATA: dict[str, type[BaseModel]] = {
 
 
 class CampaignEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     seq: int = Field(ge=1)
     ts: datetime
     type: CampaignEventType

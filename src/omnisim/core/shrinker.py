@@ -37,9 +37,7 @@ def _persists(result: EpisodeResult | None, key: ClusterKey) -> bool:
     if result is None:
         return False
     kind, joint = key
-    return any(
-        event.kind == kind and (joint is None or event.joint == joint) for event in result.failures
-    )
+    return any(event.kind == kind and event.joint == joint for event in result.failures)
 
 
 def _normalized_distance(name: str, value: float | int, nominal: ScenarioParams) -> float:
