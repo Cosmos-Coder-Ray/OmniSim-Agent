@@ -24,9 +24,12 @@ FIXED_TIME = datetime(2026, 10, 18, tzinfo=UTC)
 
 
 class FakeRunner:
-    def __init__(self, *, failures: bool = False, first_error: bool = False) -> None:
+    def __init__(
+        self, *, failures: bool = False, first_error: bool = False, all_errors: bool = False
+    ) -> None:
         self.failures = failures
         self.first_error = first_error
+        self.all_errors = all_errors
         self.count = 0
         self.closed = False
 
@@ -34,7 +37,7 @@ class FakeRunner:
         results = []
         for params in params_list:
             episode_id = f"ep_{self.count:03d}"
-            if self.first_error and self.count == 0:
+            if self.all_errors or (self.first_error and self.count == 0):
                 results.append(EpisodeError(episode_id, params, "WorkerTimeout", "timed out"))
             else:
                 failures = (
@@ -216,6 +219,15 @@ def test_cluster_stop_threshold_counts_base_keys_not_subclusters(tmp_path: Path)
     assert done["stop_reason"] == "budget"
     assert done["sims_used"] == 12
     assert done["clusters"] == 2
+
+
+def test_campaign_with_no_completed_search_episodes_is_an_error(tmp_path: Path) -> None:
+    outcome = run_campaign(**run_options(tmp_path, FakeRunner(all_errors=True), budget=4))
+
+    done = outcome.result.events[-1].data
+    assert done["status"] == "error"
+    assert done["stop_reason"] == "none"
+    assert outcome.result.episodes == []
 
 
 def test_nominal_failure_emits_started_then_error(tmp_path: Path) -> None:

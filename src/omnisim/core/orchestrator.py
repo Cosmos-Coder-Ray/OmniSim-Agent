@@ -69,6 +69,12 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("campaign clock must return timezone-aware datetimes")
+    return value.astimezone(UTC)
+
+
 def _write_json(path: Path, value: object) -> None:
     path.write_text(
         json.dumps(value, separators=(",", ":"), allow_nan=False) + "\n",
@@ -129,7 +135,7 @@ def campaign_events(
     if budget <= 0 or workers <= 0 or stop_after_clusters <= 0 or max_diagnosed < 0:
         raise ValueError("budget, workers, and stop_after_clusters must be positive")
 
-    started_at = clock()
+    started_at = _as_utc(clock())
     campaign_id = run_id or f"{robot}_{strategy}_{seed}_{started_at:%Y%m%dT%H%M%SZ}"
     if campaign_id in {"", ".", ".."} or Path(campaign_id).name != campaign_id:
         raise ValueError("run_id must be a single path component")
@@ -163,7 +169,7 @@ def campaign_events(
 
     def emit(event_type: CampaignEventType, data: dict) -> CampaignEvent:
         nonlocal seq
-        event = CampaignEvent(seq=seq + 1, ts=clock(), type=event_type, data=data)
+        event = CampaignEvent(seq=seq + 1, ts=_as_utc(clock()), type=event_type, data=data)
         seq = event.seq
         events.append(event)
         events_file.write(event.model_dump_json() + "\n")
@@ -184,7 +190,7 @@ def campaign_events(
         return result
 
     def complete(done_status: RunStatus, reason: StopReason) -> CampaignOutcome:
-        duration = max(0.0, (clock() - started_at).total_seconds())
+        duration = max(0.0, (_as_utc(clock()) - started_at).total_seconds())
         emit(
             "campaign_done",
             CampaignDoneData(
@@ -235,6 +241,7 @@ def campaign_events(
             run_dir / "shrinks.json",
             {
                 cluster_id: {
+                    "cluster_id": cluster_id,
                     "minimal": result.minimal.model_dump(mode="json"),
                     "sims_used": result.sims_used,
                     "converged": result.converged,
@@ -467,6 +474,8 @@ def campaign_events(
             persist_auxiliary()
 
         try:
+            if not episodes and trials and status == "completed":
+                raise RuntimeError("no campaign episodes completed")
             if spec_result is None:
                 spec_result = build_spec_fn(robot, run_id=campaign_id)
             mismatches_list, not_compared = compare_fn(spec_result, active_limits)
@@ -587,6 +596,12 @@ def campaign_events(
             complete("cancelled", "none")
             finished = True
         raise
+    except KeyboardInterrupt:
+        if not finished:
+            persist_auxiliary()
+            complete("cancelled", "none")
+            finished = True
+        raise
     except BudgetExceeded as error:
         error_message = str(error)
         persist_auxiliary()
@@ -605,8 +620,53 @@ def campaign_events(
         active_runner.close()
 
 
-def run_campaign(*args, **kwargs) -> CampaignOutcome:
-    generator = campaign_events(*args, **kwargs)
+def run_campaign(
+    robot: str,
+    strategy: StrategyName,
+    *,
+    seed: int,
+    budget: int,
+    workers: int = 1,
+    stop_after_clusters: int = 3,
+    max_diagnosed: int = 2,
+    run_id: str | None = None,
+    runs_root: Path = RUNS_DIR,
+    runner: BatchRunner | None = None,
+    run_episode_fn: EpisodeFn = run_episode,
+    chat_json: Callable | None = None,
+    spec: HardwareSpec | None = None,
+    build_spec_fn: BuildSpecFn = build_spec,
+    compare_fn: CompareFn = compare_with_urdf,
+    mapping_fn: MappingFn = map_failures_to_real_errors,
+    known_issues_fn: KnownIssuesFn = search_known_issues,
+    diagnose_fn: DiagnoseFn = diagnose,
+    clock: Clock = _now,
+    limits: UrdfLimits | None = None,
+    cfg: DetectorConfig = DetectorConfig(),
+) -> CampaignOutcome:
+    generator = campaign_events(
+        robot,
+        strategy,
+        seed=seed,
+        budget=budget,
+        workers=workers,
+        stop_after_clusters=stop_after_clusters,
+        max_diagnosed=max_diagnosed,
+        run_id=run_id,
+        runs_root=runs_root,
+        runner=runner,
+        run_episode_fn=run_episode_fn,
+        chat_json=chat_json,
+        spec=spec,
+        build_spec_fn=build_spec_fn,
+        compare_fn=compare_fn,
+        mapping_fn=mapping_fn,
+        known_issues_fn=known_issues_fn,
+        diagnose_fn=diagnose_fn,
+        clock=clock,
+        limits=limits,
+        cfg=cfg,
+    )
     while True:
         try:
             next(generator)
