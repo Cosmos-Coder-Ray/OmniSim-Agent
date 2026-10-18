@@ -33,3 +33,8 @@ def test_reporting_benchmark_paths_remain_visible_to_git() -> None:
         "data/benchmark_llm_cache/entry.json",
     ):
         assert not _is_ignored(path), path
+
+
+def test_root_exports_are_ignored_but_demo_exports_are_visible() -> None:
+    assert _is_ignored("exports/run_1/safe_envelope.json")
+    assert not _is_ignored("data/demo_runs/hero/exports/safe_envelope.json")

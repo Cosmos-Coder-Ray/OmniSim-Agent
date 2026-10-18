@@ -30,6 +30,7 @@ def test_run_episode_without_run_dir_does_not_write_a_replay(
         episode_id="ep_000",
     )
 
+    assert isinstance(result, EpisodeResult)
     assert result.episode_id == "ep_000"
     assert result.trajectory_path is None
     assert result.params == ScenarioParams(seed=17)
@@ -50,6 +51,8 @@ def test_run_episode_writes_live_replay_and_keeps_original_params(
         run_dir=tmp_path,
     )
 
+    assert isinstance(baseline, EpisodeResult)
+    assert isinstance(result, EpisodeResult)
     assert result.params == params
     assert result.max_tau_ratio != baseline.max_tau_ratio
     assert result.trajectory_path == (tmp_path / "ep_001.json").as_posix()

@@ -4,14 +4,15 @@ import hashlib
 import json
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass
-from math import inf
+from math import inf, isfinite
 from pathlib import Path
 from time import monotonic
+from typing import Protocol
 
 import numpy as np
 
 from omnisim.agents.baselines import PARAM_NAMES, scenario_bounds
-from omnisim.core.shield import EpisodeBlocked, SafetyShield
+from omnisim.core.shield import EpisodeBlocked, SafetyShield, Shield
 from omnisim.schemas import EpisodeResult, FailureKind, SafeEnvelope, ScenarioParams
 from omnisim.sim.detectors import DetectorConfig
 from omnisim.sim.limits import UrdfLimits
@@ -20,6 +21,22 @@ from omnisim.sim.runner import EpisodeError, EpisodeRunner
 
 Clock = Callable[[], float]
 BatchResults = Sequence[EpisodeResult | EpisodeError | EpisodeBlocked]
+
+
+class VerificationRunner(Protocol):
+    def run_batch(
+        self,
+        params_list: list[ScenarioParams],
+        limits: UrdfLimits,
+        *,
+        workers: int,
+        shield: Shield | None = None,
+        run_dir: Path | None = None,
+        cfg: DetectorConfig = DetectorConfig(),
+    ) -> BatchResults: ...
+
+    def close(self) -> None: ...
+
 
 TUNING_SCENARIOS = 100
 CONFIRMATION_SCENARIOS = 200
@@ -103,6 +120,26 @@ def _scenario_seed(seed: int, index: int, used: set[int]) -> int:
     return candidate
 
 
+def _validate_bounds(
+    bounds: Mapping[str, tuple[float, float]],
+) -> dict[str, tuple[float, float]]:
+    if set(bounds) != set(PARAM_NAMES):
+        raise ValueError("verification bounds must cover every ScenarioParams field except seed")
+    schema_bounds = scenario_bounds()
+    validated = {name: (float(low), float(high)) for name, (low, high) in bounds.items()}
+    for name, (low, high) in validated.items():
+        schema_low, schema_high = schema_bounds[name]
+        if (
+            not isfinite(low)
+            or not isfinite(high)
+            or low >= high
+            or low < schema_low
+            or high > schema_high
+        ):
+            raise ValueError(f"verification bounds are outside ScenarioParams limits: {name}")
+    return validated
+
+
 def sample_scenarios(
     n: int,
     seed: int,
@@ -112,9 +149,7 @@ def sample_scenarios(
 ) -> list[ScenarioParams]:
     if n <= 0:
         raise ValueError("n must be positive")
-    active_bounds = bounds or scenario_bounds()
-    if set(active_bounds) != set(PARAM_NAMES):
-        raise ValueError("verification bounds must cover every ScenarioParams field except seed")
+    active_bounds = _validate_bounds(bounds if bounds is not None else scenario_bounds())
     rng = np.random.default_rng(seed)
     used = set(reserved_seeds)
     scenarios: list[ScenarioParams] = []
@@ -130,7 +165,7 @@ def sample_scenarios(
 
 
 def _run_batch(
-    runner: EpisodeRunner,
+    runner: VerificationRunner,
     scenarios: list[ScenarioParams],
     limits: UrdfLimits,
     *,
@@ -159,7 +194,7 @@ def run_off_baseline(
     *,
     workers: int,
     cfg: DetectorConfig,
-    runner: EpisodeRunner,
+    runner: VerificationRunner,
     run_dir: Path | None = None,
 ) -> VerificationBaseline:
     scenario_list = list(scenarios)
@@ -191,14 +226,7 @@ def _bounds_from_envelope(envelope: SafeEnvelope) -> dict[str, tuple[float, floa
         ):
             raise ValueError(f"invalid verification bounds for {name}")
         bounds[name] = (float(value[0]), float(value[1]))
-    if set(bounds) != set(PARAM_NAMES):
-        raise ValueError("verification bounds must cover every ScenarioParams field except seed")
-    schema_bounds = scenario_bounds()
-    for name, (low, high) in bounds.items():
-        schema_low, schema_high = schema_bounds[name]
-        if low >= high or low < schema_low or high > schema_high:
-            raise ValueError(f"verification bounds are outside ScenarioParams limits: {name}")
-    return bounds
+    return _validate_bounds(bounds)
 
 
 def _per_kind(
@@ -256,7 +284,7 @@ def verify(
     seed: int,
     workers: int,
     cfg: DetectorConfig,
-    runner: EpisodeRunner | None = None,
+    runner: VerificationRunner | None = None,
     clock: Clock = monotonic,
     scenarios: Sequence[ScenarioParams] | None = None,
     off_baseline: VerificationBaseline | None = None,
@@ -399,7 +427,7 @@ def refine_and_verify(
     limits: UrdfLimits,
     workers: int,
     cfg: DetectorConfig,
-    runner: EpisodeRunner | None = None,
+    runner: VerificationRunner | None = None,
     clock: Clock = monotonic,
     domain_bounds: Mapping[str, tuple[float, float]] | None = None,
     discovery_episodes: Sequence[EpisodeResult] = (),
@@ -408,14 +436,7 @@ def refine_and_verify(
     if workers <= 0:
         raise ValueError("workers must be positive")
     tuning_seed, confirmation_seed = verification_seeds(campaign_seed)
-    bounds = dict(domain_bounds or scenario_bounds())
-    if set(bounds) != set(PARAM_NAMES):
-        raise ValueError("verification bounds must cover every ScenarioParams field except seed")
-    schema_bounds = scenario_bounds()
-    for name, (low, high) in bounds.items():
-        schema_low, schema_high = schema_bounds[name]
-        if low >= high or low < schema_low or high > schema_high:
-            raise ValueError(f"verification bounds are outside ScenarioParams limits: {name}")
+    bounds = _validate_bounds(domain_bounds if domain_bounds is not None else scenario_bounds())
     tuning_scenarios = sample_scenarios(
         TUNING_SCENARIOS,
         tuning_seed,

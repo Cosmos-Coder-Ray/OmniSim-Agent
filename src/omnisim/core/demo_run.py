@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from omnisim.core.exports import EXPORTS_DIR
 from omnisim.core.orchestrator import RUNS_DIR
 from omnisim.schemas import CampaignResult, Replay
 
@@ -47,6 +48,7 @@ def save_demo_run(
     force: bool = False,
     runs_root: Path = RUNS_DIR,
     demo_root: Path = DEMO_RUNS_DIR,
+    exports_root: Path = EXPORTS_DIR,
 ) -> SavedDemoRun:
     run_id = _component(run_id, "run_id")
     name = _component(name, "name")
@@ -54,6 +56,12 @@ def save_demo_run(
     source_dir = resolved_runs / run_id
     if source_dir.is_symlink() or source_dir.resolve().parent != resolved_runs:
         raise ValueError("run directory must remain under the runs directory")
+    resolved_exports = exports_root.resolve()
+    source_exports = resolved_exports / run_id
+    if source_exports.is_symlink() or (
+        source_exports.exists() and source_exports.resolve().parent != resolved_exports
+    ):
+        raise ValueError("export directory must remain under the export directory")
     demo_root.mkdir(parents=True, exist_ok=True)
     resolved_demo = demo_root.resolve()
     destination = resolved_demo / name
@@ -107,6 +115,12 @@ def save_demo_run(
             source = source_dir / filename
             if source.is_file():
                 shutil.copy2(source, staging / filename)
+        if source_exports.is_dir():
+            source_exports_resolved = source_exports.resolve()
+            for path in source_exports.rglob("*"):
+                if path.is_symlink() or not path.resolve().is_relative_to(source_exports_resolved):
+                    raise ValueError("export files must remain under the export directory")
+            shutil.copytree(source_exports, staging / "exports")
 
         if destination.exists():
             destination.replace(backup)

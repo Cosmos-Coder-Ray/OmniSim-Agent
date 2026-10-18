@@ -16,7 +16,7 @@ from omnisim.core.shrinker import ShrinkResult
 from omnisim.core.verify import VerificationResult
 from omnisim.knowledge.verifier import verified_only
 from omnisim.llm import nebius
-from omnisim.llm.budget import LLMError, Usage
+from omnisim.llm.budget import BudgetExceeded, LLMError, Usage
 from omnisim.schemas import DiagnosisReport, EpisodeResult, Evidence, HardwareSpec, SafeEnvelope
 from omnisim.sim.constants import TICK_MS
 from omnisim.sim.detectors import DetectorConfig
@@ -106,7 +106,13 @@ def load_domain_bounds(path: Path | None = None) -> dict[str, tuple[float, float
             raise ValueError(f"invalid domain bounds for {name}")
         low, high = float(value[0]), float(value[1])
         schema_low, schema_high = schema_bounds[name]
-        if low >= high or low < schema_low or high > schema_high:
+        if (
+            not math.isfinite(low)
+            or not math.isfinite(high)
+            or low >= high
+            or low < schema_low
+            or high > schema_high
+        ):
             raise ValueError(f"domain bounds are outside ScenarioParams limits: {name}")
         validated[name] = (low, high)
     return validated
@@ -275,7 +281,13 @@ def mitigate(
         raise ValueError("domain bounds must cover every ScenarioParams field except seed")
     for name, (low, high) in active_bounds.items():
         schema_low, schema_high = schema_bounds[name]
-        if low >= high or low < schema_low or high > schema_high:
+        if (
+            not math.isfinite(low)
+            or not math.isfinite(high)
+            or low >= high
+            or low < schema_low
+            or high > schema_high
+        ):
             raise ValueError(f"domain bounds are outside ScenarioParams limits: {name}")
     active_limits = limits or load_urdf_limits()
     evidence_by_id, evidence_prompt = _verified_evidence(spec)
@@ -325,11 +337,17 @@ def mitigate(
 
         try:
             llm_values, evidence, advisories = ask(user)
+        except BudgetExceeded as error:
+            fallback = True
+            fallback_reason = f"mitigation token budget exhausted: {error}"
         except (LLMError, ValueError) as error:
             try:
                 llm_values, evidence, advisories = ask(
                     f"{user}\n\nRepair the previous JSON. Validation error: {error}"
                 )
+            except BudgetExceeded as repair_error:
+                fallback = True
+                fallback_reason = f"mitigation token budget exhausted: {repair_error}"
             except (LLMError, ValueError) as repair_error:
                 fallback = True
                 fallback_reason = f"mitigation draft failed: {type(repair_error).__name__}"

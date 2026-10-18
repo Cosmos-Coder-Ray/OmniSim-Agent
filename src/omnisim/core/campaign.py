@@ -42,6 +42,14 @@ class TrialBatch:
     duration_s: float
 
 
+def _trial_error(result: EpisodeResult | EpisodeError | EpisodeBlocked) -> str | None:
+    if isinstance(result, EpisodeBlocked):
+        raise RuntimeError("campaign runner unexpectedly returned a blocked episode")
+    if isinstance(result, EpisodeResult):
+        return None
+    return f"{result.error_type}: {result.message}"
+
+
 def _sim_seed(benchmark_seed: int, sim_index: int) -> int:
     return int(
         np.random.SeedSequence([benchmark_seed % (2**32), sim_index]).generate_state(
@@ -83,18 +91,12 @@ def iter_trial_batches(
         ]
         batch_started = perf_counter()
         results = runner.run_batch(params_list, limits, workers=workers, run_dir=run_dir, cfg=cfg)
-        if any(isinstance(result, EpisodeBlocked) for result in results):
-            raise RuntimeError("campaign runner unexpectedly returned a blocked episode")
         duration_s = perf_counter() - batch_started
         trials = [
             Trial(
                 params=params,
                 result=result if isinstance(result, EpisodeResult) else None,
-                error=(
-                    None
-                    if isinstance(result, EpisodeResult)
-                    else f"{result.error_type}: {result.message}"
-                ),
+                error=_trial_error(result),
             )
             for params, result in zip(params_list, results, strict=True)
         ]

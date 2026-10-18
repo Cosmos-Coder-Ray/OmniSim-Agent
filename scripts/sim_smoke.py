@@ -1,5 +1,6 @@
 import time
 
+from omnisim.core.shield import EpisodeBlocked
 from omnisim.schemas import EpisodeResult, ScenarioParams
 from omnisim.sim.limits import load_urdf_limits
 from omnisim.sim.runner import EpisodeError, EpisodeRunner
@@ -29,6 +30,8 @@ def main() -> int:
             if isinstance(result, EpisodeError):
                 print(f"{label}: {result.error_type}: {result.message}", flush=True)
                 return 1
+            if isinstance(result, EpisodeBlocked):
+                raise RuntimeError("smoke episode unexpectedly returned EpisodeBlocked")
 
             print_result(label, result, elapsed)
     print(f"total time: {time.perf_counter() - start:.3f}s")

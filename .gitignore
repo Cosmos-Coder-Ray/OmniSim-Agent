@@ -36,3 +36,4 @@ web/dist/
 rules/*
 rules/AGENTS.md
 .claude/
+/exports/

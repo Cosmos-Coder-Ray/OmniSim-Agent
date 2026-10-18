@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
+from omnisim.core.shield import Shield
 from omnisim.core.verify import (
     CONFIRMATION_SCENARIOS,
     TUNING_SCENARIOS,
+    BatchResults,
     refine_and_verify,
     sample_scenarios,
     verification_seeds,
@@ -61,10 +65,19 @@ class FakeRunner:
         self.errors = errors
         self.calls: list[list[ScenarioParams]] = []
 
-    def run_batch(self, params, limits, *, workers, shield, run_dir, cfg):
-        self.calls.append(list(params))
+    def run_batch(
+        self,
+        params_list: list[ScenarioParams],
+        limits: UrdfLimits,
+        *,
+        workers: int,
+        shield: Shield | None = None,
+        run_dir: Path | None = None,
+        cfg=DetectorConfig(),
+    ) -> BatchResults:
+        self.calls.append(list(params_list))
         results = []
-        for index, item in enumerate(params):
+        for index, item in enumerate(params_list):
             episode_id = f"ep_{len(self.calls)}_{index}"
             if self.errors:
                 results.append(EpisodeError(episode_id, item, "WorkerError", "failed"))

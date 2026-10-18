@@ -34,8 +34,9 @@ class InverseDynamicsPredictor:
         reference = self._reference(speed_scale)
         q_ref = reference.q_ref
         dt = 1.0 / CONTROL_HZ
-        dq_ref = np.gradient(q_ref, dt, axis=0, edge_order=2)
-        ddq_ref = np.gradient(dq_ref, dt, axis=0, edge_order=2)
+        dq_ref = np.asarray(np.gradient(q_ref, dt, axis=0, edge_order=2), dtype=np.float64)
+        ddq_ref = np.asarray(np.gradient(dq_ref, dt, axis=0, edge_order=2), dtype=np.float64)
+        q_ref = np.asarray(q_ref, dtype=np.float64)
         peak = 0.0
         for q, dq, ddq in zip(q_ref, dq_ref, ddq_ref, strict=True):
             tau = p.calculateInverseDynamics(
