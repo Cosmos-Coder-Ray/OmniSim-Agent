@@ -432,6 +432,7 @@ def refine_and_verify(
     domain_bounds: Mapping[str, tuple[float, float]] | None = None,
     discovery_episodes: Sequence[EpisodeResult] = (),
     criteria: VerificationCriteria = VerificationCriteria(),
+    stage_callback: Callable[[str], None] | None = None,
 ) -> RefinementResult:
     if workers <= 0:
         raise ValueError("workers must be positive")
@@ -470,11 +471,15 @@ def refine_and_verify(
         candidates: list[SafeEnvelope] = []
         previous_envelope: SafeEnvelope | None = None
         previous_result: VerificationResult | None = None
+        if stage_callback is not None:
+            stage_callback("mitigation")
         for iteration in range(MAX_REFINEMENTS):
             candidate = draft(iteration, previous_envelope, previous_result)
             if _bounds_from_envelope(candidate) != bounds:
                 raise ValueError("draft envelope bounds must match verification domain bounds")
             candidates.append(candidate)
+            if iteration == 0 and stage_callback is not None:
+                stage_callback("verification")
             result = verify(
                 candidate,
                 limits,

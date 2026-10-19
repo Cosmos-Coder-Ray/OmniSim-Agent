@@ -43,6 +43,8 @@ from omnisim.sim.runner import EpisodeRunner, run_episode
 
 RUNS_DIR = Path(__file__).resolve().parents[3] / "runs"
 Clock = Callable[[], datetime]
+StageCallback = Callable[[str], None]
+CancelCheck = Callable[[], bool]
 EpisodeFn = Callable[..., EpisodeResult | EpisodeBlocked]
 BuildSpecFn = Callable[..., HardwareSpec]
 CompareFn = Callable[..., tuple[list[Mismatch], list]]
@@ -136,6 +138,8 @@ def campaign_events(
     known_issues_fn: KnownIssuesFn = search_known_issues,
     diagnose_fn: DiagnoseFn = diagnose,
     clock: Clock = _now,
+    on_stage: StageCallback | None = None,
+    cancel_requested: CancelCheck | None = None,
     limits: UrdfLimits | None = None,
     cfg: DetectorConfig = DetectorConfig(),
 ) -> Generator[CampaignEvent, None, CampaignOutcome]:
@@ -173,6 +177,13 @@ def campaign_events(
 
     events_file = events_path.open("w", encoding="utf-8")
     episodes_file = episodes_path.open("w", encoding="utf-8")
+
+    def set_stage(stage: str) -> None:
+        if on_stage is not None:
+            on_stage(stage)
+
+    def is_cancelled() -> bool:
+        return cancel_requested is not None and cancel_requested()
 
     def emit(event_type: CampaignEventType, data: dict) -> CampaignEvent:
         nonlocal seq
@@ -272,6 +283,7 @@ def campaign_events(
             },
         )
 
+    set_stage("search")
     try:
         nominal: EpisodeResult | None = None
         nominal_error: str | None = None
@@ -313,12 +325,11 @@ def campaign_events(
             finished = True
             return outcome
 
-        active_strategy = make_strategy(
-            strategy,
-            seed=seed,
-            budget=budget,
-            chat_json=chat_json,
-        )
+        if is_cancelled():
+            status = "cancelled"
+            stop_reason = "none"
+
+        active_strategy = make_strategy(strategy, seed=seed, budget=budget, chat_json=chat_json)
         reached_cluster_limit = False
 
         def should_stop(history: list[Trial]) -> bool:
@@ -329,18 +340,26 @@ def campaign_events(
             return reached_cluster_limit
 
         try:
-            batches = iter_trial_batches(
-                active_strategy,
-                active_runner,
-                active_limits,
-                benchmark_seed=seed,
-                budget=budget,
-                workers=workers,
-                cfg=cfg,
-                stop_predicate=should_stop,
-                run_dir=trajectory_dir,
+            batches = (
+                iter_trial_batches(
+                    active_strategy,
+                    active_runner,
+                    active_limits,
+                    benchmark_seed=seed,
+                    budget=budget,
+                    workers=workers,
+                    cfg=cfg,
+                    stop_predicate=should_stop,
+                    run_dir=trajectory_dir,
+                )
+                if status != "cancelled"
+                else ()
             )
             for batch in batches:
+                if is_cancelled():
+                    status = "cancelled"
+                    stop_reason = "none"
+                    break
                 yield emit(
                     "hypothesis",
                     {
@@ -362,6 +381,10 @@ def campaign_events(
                     },
                 )
                 for trial in batch.trials:
+                    if is_cancelled():
+                        status = "cancelled"
+                        stop_reason = "none"
+                        break
                     if trial.result is None:
                         trials.append(trial)
                         yield emit(
@@ -408,6 +431,8 @@ def campaign_events(
                                     "severity": selected.severity,
                                 },
                             )
+                if status == "cancelled":
+                    break
                 current = cluster_episodes(episodes, seed)
                 clusters = current.clusters
                 write_clustering(current)
@@ -424,7 +449,8 @@ def campaign_events(
             stop_reason = "token_cap"
             error_message = str(error)
         else:
-            stop_reason = "clusters" if reached_cluster_limit else "budget"
+            if status == "completed":
+                stop_reason = "clusters" if reached_cluster_limit else "budget"
 
         final_clustering = cluster_episodes(episodes, seed)
         clusters = final_clustering.clusters
@@ -435,84 +461,105 @@ def campaign_events(
             clusters,
             key=lambda item: (-item.best_risk, -item.max_severity, item.cluster_id),
         )
-        for cluster in ranked_clusters[:max_diagnosed]:
-            representative = max(
-                (episode_by_id[episode_id] for episode_id in cluster.episode_ids),
-                key=lambda item: (item.risk, item.episode_id),
-            )
+        set_stage("shrink")
+        if status != "cancelled":
+            for cluster in ranked_clusters[:max_diagnosed]:
+                if is_cancelled():
+                    status = "cancelled"
+                    stop_reason = "none"
+                    break
+                representative = max(
+                    (episode_by_id[episode_id] for episode_id in cluster.episode_ids),
+                    key=lambda item: (item.risk, item.episode_id),
+                )
 
-            def evaluate(candidate: ScenarioParams) -> EpisodeResult:
-                return _episode_result(
+                def evaluate(candidate: ScenarioParams) -> EpisodeResult:
+                    return _episode_result(
+                        run_episode_fn(
+                            candidate,
+                            active_limits,
+                            episode_id=f"shrink_{_safe_cluster_name(cluster.cluster_id)}",
+                            run_dir=None,
+                            cfg=cfg,
+                        )
+                    )
+
+                shrunk = shrink(
+                    representative.params,
+                    (cluster.kind, cluster.joint),
+                    evaluate,
+                    cap=25,
+                )
+                if is_cancelled():
+                    status = "cancelled"
+                    stop_reason = "none"
+                    break
+                repro = _episode_result(
                     run_episode_fn(
-                        candidate,
+                        shrunk.minimal,
                         active_limits,
-                        episode_id=f"shrink_{_safe_cluster_name(cluster.cluster_id)}",
-                        run_dir=None,
+                        episode_id=f"shrunk_{_safe_cluster_name(cluster.cluster_id)}",
+                        run_dir=trajectory_dir,
                         cfg=cfg,
                     )
                 )
-
-            shrunk = shrink(
-                representative.params,
-                (cluster.kind, cluster.joint),
-                evaluate,
-                cap=25,
-            )
-            repro = _episode_result(
-                run_episode_fn(
-                    shrunk.minimal,
-                    active_limits,
-                    episode_id=f"shrunk_{_safe_cluster_name(cluster.cluster_id)}",
-                    run_dir=trajectory_dir,
-                    cfg=cfg,
+                repro = _relative_result(repro, run_dir)
+                shrinks[cluster.cluster_id] = ShrinkResult(
+                    minimal=shrunk.minimal,
+                    sims_used=shrunk.sims_used + 1,
+                    converged=shrunk.converged,
+                    trace=shrunk.trace,
                 )
-            )
-            repro = _relative_result(repro, run_dir)
-            shrinks[cluster.cluster_id] = ShrinkResult(
-                minimal=shrunk.minimal,
-                sims_used=shrunk.sims_used + 1,
-                converged=shrunk.converged,
-                trace=shrunk.trace,
-            )
-            yield emit(
-                "shrink_done",
-                {
-                    "cluster_id": cluster.cluster_id,
-                    "episode_id": repro.episode_id,
-                    "sims_used": shrunk.sims_used + 1,
-                    "converged": shrunk.converged,
-                    "trajectory_path": repro.trajectory_path,
-                },
-            )
-            persist_auxiliary()
-
-        try:
-            if not episodes and trials and status == "completed":
-                raise RuntimeError("no campaign episodes completed")
-            if spec_result is None:
-                spec_result = build_spec_fn(robot, run_id=campaign_id)
-            mismatches_list, not_compared = compare_fn(spec_result, active_limits)
-            mismatches = tuple(mismatches_list)
-            failure_kinds = list(
-                dict.fromkeys(event.kind for episode in episodes for event in episode.failures)
-            )
-            if failure_kinds:
-                error_mappings = mapping_fn(failure_kinds, spec_result, run_id=campaign_id)
-            _write_json(
-                run_dir / "spec.json",
-                {
-                    "spec": spec_result.model_dump(mode="json"),
-                    "mismatches": [item.model_dump(mode="json") for item in mismatches],
-                    "not_compared": [item.model_dump(mode="json") for item in not_compared],
-                    "error_mappings": {
-                        key: value.model_dump(mode="json") for key, value in error_mappings.items()
+                yield emit(
+                    "shrink_done",
+                    {
+                        "cluster_id": cluster.cluster_id,
+                        "episode_id": repro.episode_id,
+                        "sims_used": shrunk.sims_used + 1,
+                        "converged": shrunk.converged,
+                        "trajectory_path": repro.trajectory_path,
                     },
-                },
-            )
-            yield emit(
-                "spec_ready",
-                {"ok": True, "robot": spec_result.robot, "mismatch_count": len(mismatches)},
-            )
+                )
+                persist_auxiliary()
+
+        set_stage("spec")
+        try:
+            if is_cancelled():
+                status = "cancelled"
+                stop_reason = "none"
+            elif not episodes and trials and status == "completed":
+                raise RuntimeError("no campaign episodes completed")
+            elif status != "cancelled":
+                if spec_result is None:
+                    spec_result = build_spec_fn(robot, run_id=campaign_id)
+                mismatches_list, not_compared = compare_fn(spec_result, active_limits)
+                mismatches = tuple(mismatches_list)
+                failure_kinds = list(
+                    dict.fromkeys(event.kind for episode in episodes for event in episode.failures)
+                )
+                if failure_kinds:
+                    error_mappings = mapping_fn(failure_kinds, spec_result, run_id=campaign_id)
+                _write_json(
+                    run_dir / "spec.json",
+                    {
+                        "spec": spec_result.model_dump(mode="json"),
+                        "mismatches": [item.model_dump(mode="json") for item in mismatches],
+                        "not_compared": [item.model_dump(mode="json") for item in not_compared],
+                        "error_mappings": {
+                            key: value.model_dump(mode="json")
+                            for key, value in error_mappings.items()
+                        },
+                    },
+                )
+                yield emit(
+                    "spec_ready",
+                    {
+                        "ok": True,
+                        "robot": spec_result.robot,
+                        "mismatch_count": len(mismatches),
+                        "spec_origin": "provided" if spec is not None else "built",
+                    },
+                )
         except BudgetExceeded as error:
             status = "token_cap"
             stop_reason = "token_cap"
@@ -525,74 +572,84 @@ def campaign_events(
             yield emit("spec_ready", {"ok": False, "error": error_message})
             _write_json(run_dir / "spec.json", {"spec": None, "error": error_message})
 
-        for cluster in ranked_clusters[:max_diagnosed]:
-            if status == "token_cap":
-                yield emit(
-                    "diagnosis_ready",
-                    {"cluster_id": cluster.cluster_id, "ok": False, "error": "token cap reached"},
+        set_stage("diagnosis")
+        if status != "cancelled":
+            for cluster in ranked_clusters[:max_diagnosed]:
+                if is_cancelled():
+                    status = "cancelled"
+                    stop_reason = "none"
+                    break
+                if status == "token_cap":
+                    yield emit(
+                        "diagnosis_ready",
+                        {
+                            "cluster_id": cluster.cluster_id,
+                            "ok": False,
+                            "error": "token cap reached",
+                        },
+                    )
+                    continue
+                if spec_result is None:
+                    yield emit(
+                        "diagnosis_ready",
+                        {
+                            "cluster_id": cluster.cluster_id,
+                            "ok": False,
+                            "error": "hardware spec unavailable",
+                        },
+                    )
+                    continue
+                representative = max(
+                    (episode_by_id[episode_id] for episode_id in cluster.episode_ids),
+                    key=lambda item: (item.risk, item.episode_id),
                 )
-                continue
-            if spec_result is None:
-                yield emit(
-                    "diagnosis_ready",
-                    {
-                        "cluster_id": cluster.cluster_id,
-                        "ok": False,
-                        "error": "hardware spec unavailable",
-                    },
-                )
-                continue
-            representative = max(
-                (episode_by_id[episode_id] for episode_id in cluster.episode_ids),
-                key=lambda item: (item.risk, item.episode_id),
-            )
-            minimal = shrinks.get(cluster.cluster_id)
-            try:
-                known_issues = known_issues_fn(robot, cluster.kind, run_id=campaign_id)
-                report = diagnose_fn(
-                    cluster,
-                    representative,
-                    minimal.minimal if minimal is not None else representative.params,
-                    spec_result,
-                    mapping=error_mappings.get(cluster.kind),
-                    known_issues=known_issues,
-                    chat_json=chat_json,
-                    run_id=campaign_id,
-                )
-            except BudgetExceeded as error:
-                status = "token_cap"
-                stop_reason = "token_cap"
-                error_message = str(error)
-                yield emit(
-                    "diagnosis_ready",
-                    {"cluster_id": cluster.cluster_id, "ok": False, "error": error_message},
-                )
-            except Exception as error:
-                yield emit(
-                    "diagnosis_ready",
-                    {
-                        "cluster_id": cluster.cluster_id,
-                        "ok": False,
-                        "error": f"{type(error).__name__}: {error}",
-                    },
-                )
-            else:
-                diagnoses[cluster.cluster_id] = report
-                _write_json(
-                    run_dir / "diagnoses.json",
-                    {
-                        cluster_id: item.model_dump(mode="json")
-                        for cluster_id, item in diagnoses.items()
-                    },
-                )
-                yield emit(
-                    "diagnosis_ready",
-                    {
-                        "cluster_id": cluster.cluster_id,
-                        "ok": True,
-                        "confidence": report.confidence,
-                    },
-                )
+                minimal = shrinks.get(cluster.cluster_id)
+                try:
+                    known_issues = known_issues_fn(robot, cluster.kind, run_id=campaign_id)
+                    report = diagnose_fn(
+                        cluster,
+                        representative,
+                        minimal.minimal if minimal is not None else representative.params,
+                        spec_result,
+                        mapping=error_mappings.get(cluster.kind),
+                        known_issues=known_issues,
+                        chat_json=chat_json,
+                        run_id=campaign_id,
+                    )
+                except BudgetExceeded as error:
+                    status = "token_cap"
+                    stop_reason = "token_cap"
+                    error_message = str(error)
+                    yield emit(
+                        "diagnosis_ready",
+                        {"cluster_id": cluster.cluster_id, "ok": False, "error": error_message},
+                    )
+                except Exception as error:
+                    yield emit(
+                        "diagnosis_ready",
+                        {
+                            "cluster_id": cluster.cluster_id,
+                            "ok": False,
+                            "error": f"{type(error).__name__}: {error}",
+                        },
+                    )
+                else:
+                    diagnoses[cluster.cluster_id] = report
+                    _write_json(
+                        run_dir / "diagnoses.json",
+                        {
+                            cluster_id: item.model_dump(mode="json")
+                            for cluster_id, item in diagnoses.items()
+                        },
+                    )
+                    yield emit(
+                        "diagnosis_ready",
+                        {
+                            "cluster_id": cluster.cluster_id,
+                            "ok": True,
+                            "confidence": report.confidence,
+                        },
+                    )
 
         if status == "completed":
             status = (

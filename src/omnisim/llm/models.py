@@ -58,8 +58,8 @@ def list_models(client: Any) -> list[str]:
     return list(_list_models(client))
 
 
-def resolve_model(client: Any, role: Role) -> str:
-    settings = Settings.from_env()
+def resolve_model(client: Any, role: Role, *, settings: Settings | None = None) -> str:
+    settings = settings or Settings.from_env()
     configured = {
         "fast": settings.NEBIUS_FAST_MODEL,
         "deep": settings.NEBIUS_DEEP_MODEL,

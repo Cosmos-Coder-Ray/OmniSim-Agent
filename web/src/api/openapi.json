@@ -1,0 +1,1145 @@
+{
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "replay": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replay"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "ApiError",
+        "type": "object"
+      },
+      "BenchmarkResult": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "title": "Budget",
+            "type": "integer"
+          },
+          "seed_count": {
+            "title": "Seed Count",
+            "type": "integer"
+          },
+          "source": {
+            "enum": [
+              "live",
+              "recorded",
+              "mock"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "strategies": {
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkStrategy"
+            },
+            "title": "Strategies",
+            "type": "array"
+          }
+        },
+        "required": [
+          "budget",
+          "seed_count",
+          "strategies",
+          "source"
+        ],
+        "title": "BenchmarkResult",
+        "type": "object"
+      },
+      "BenchmarkStrategy": {
+        "properties": {
+          "best_risk": {
+            "$ref": "#/components/schemas/MeanStd"
+          },
+          "cumulative_failures": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Cumulative Failures",
+            "type": "array"
+          },
+          "sims_to_first_failure": {
+            "$ref": "#/components/schemas/FirstFailureSummary"
+          },
+          "strategy": {
+            "enum": [
+              "nemotron",
+              "random",
+              "cmaes"
+            ],
+            "title": "Strategy",
+            "type": "string"
+          },
+          "unique_failure_kinds": {
+            "$ref": "#/components/schemas/UniqueFailureKindsSummary"
+          }
+        },
+        "required": [
+          "strategy",
+          "sims_to_first_failure",
+          "cumulative_failures",
+          "unique_failure_kinds",
+          "best_risk"
+        ],
+        "title": "BenchmarkStrategy",
+        "type": "object"
+      },
+      "CampaignAccepted": {
+        "properties": {
+          "budget": {
+            "title": "Budget",
+            "type": "integer"
+          },
+          "campaign_id": {
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "profile": {
+            "title": "Profile",
+            "type": "string"
+          },
+          "queue_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Position"
+          },
+          "source": {
+            "enum": [
+              "live",
+              "recorded"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignStage"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id",
+          "status",
+          "source",
+          "profile",
+          "budget",
+          "stages"
+        ],
+        "title": "CampaignAccepted",
+        "type": "object"
+      },
+      "CampaignCancellation": {
+        "properties": {
+          "campaign_id": {
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "cancelling",
+            "default": "cancelling",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id"
+        ],
+        "title": "CampaignCancellation",
+        "type": "object"
+      },
+      "CampaignProgress": {
+        "properties": {
+          "clusters": {
+            "default": 0,
+            "title": "Clusters",
+            "type": "integer"
+          },
+          "last_event_id": {
+            "default": 0,
+            "title": "Last Event Id",
+            "type": "integer"
+          },
+          "sims_used": {
+            "default": 0,
+            "title": "Sims Used",
+            "type": "integer"
+          }
+        },
+        "title": "CampaignProgress",
+        "type": "object"
+      },
+      "CampaignRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget"
+          },
+          "quick": {
+            "default": false,
+            "title": "Quick",
+            "type": "boolean"
+          },
+          "robot": {
+            "const": "franka_panda",
+            "default": "franka_panda",
+            "title": "Robot",
+            "type": "string"
+          },
+          "seed": {
+            "default": 17,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "strategy": {
+            "default": "nemotron",
+            "enum": [
+              "nemotron",
+              "random",
+              "cmaes"
+            ],
+            "title": "Strategy",
+            "type": "string"
+          },
+          "verify": {
+            "default": false,
+            "title": "Verify",
+            "type": "boolean"
+          }
+        },
+        "title": "CampaignRequest",
+        "type": "object"
+      },
+      "CampaignStage": {
+        "enum": [
+          "search",
+          "shrink",
+          "spec",
+          "diagnosis",
+          "mitigation",
+          "verification",
+          "exports",
+          "done"
+        ],
+        "title": "CampaignStage",
+        "type": "string"
+      },
+      "CampaignState": {
+        "properties": {
+          "campaign_id": {
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/CampaignProgress"
+          },
+          "queue_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue Position"
+          },
+          "source": {
+            "enum": [
+              "live",
+              "recorded"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CampaignStage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignStage"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id",
+          "status",
+          "stages",
+          "source",
+          "config",
+          "progress"
+        ],
+        "title": "CampaignState",
+        "type": "object"
+      },
+      "ExportsResponse": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "campaign_id": {
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id",
+          "status",
+          "artifacts"
+        ],
+        "title": "ExportsResponse",
+        "type": "object"
+      },
+      "FirstFailureSummary": {
+        "properties": {
+          "mean": {
+            "title": "Mean",
+            "type": "number"
+          },
+          "mean_is_lower_bound": {
+            "title": "Mean Is Lower Bound",
+            "type": "boolean"
+          },
+          "per_seed": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Per Seed",
+            "type": "array"
+          },
+          "seeds_with_failure": {
+            "title": "Seeds With Failure",
+            "type": "integer"
+          },
+          "std": {
+            "title": "Std",
+            "type": "number"
+          }
+        },
+        "required": [
+          "mean",
+          "std",
+          "per_seed",
+          "seeds_with_failure",
+          "mean_is_lower_bound"
+        ],
+        "title": "FirstFailureSummary",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "demo_mode": {
+            "title": "Demo Mode",
+            "type": "boolean"
+          },
+          "demo_ready": {
+            "title": "Demo Ready",
+            "type": "boolean"
+          },
+          "knowledge_usage": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "title": "Knowledge Usage",
+            "type": "object"
+          },
+          "model_resolution": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Resolution"
+          },
+          "queue": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Queue",
+            "type": "object"
+          },
+          "recorded_runs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recorded Runs",
+            "type": "array"
+          },
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "token_usage": {
+            "additionalProperties": true,
+            "title": "Token Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "demo_mode",
+          "demo_ready",
+          "recorded_runs",
+          "queue",
+          "token_usage",
+          "knowledge_usage",
+          "model_resolution"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "MeanStd": {
+        "properties": {
+          "mean": {
+            "title": "Mean",
+            "type": "number"
+          },
+          "std": {
+            "title": "Std",
+            "type": "number"
+          }
+        },
+        "required": [
+          "mean",
+          "std"
+        ],
+        "title": "MeanStd",
+        "type": "object"
+      },
+      "UniqueFailureKindsSummary": {
+        "properties": {
+          "kinds": {
+            "items": {
+              "enum": [
+                "torque_saturation",
+                "joint_limit",
+                "velocity_limit",
+                "tracking_error",
+                "singularity",
+                "collision",
+                "instability"
+              ],
+              "type": "string"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "mean": {
+            "title": "Mean",
+            "type": "number"
+          },
+          "std": {
+            "title": "Std",
+            "type": "number"
+          }
+        },
+        "required": [
+          "kinds",
+          "mean",
+          "std"
+        ],
+        "title": "UniqueFailureKindsSummary",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "OmniSim-Agent API",
+    "version": "1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/benchmark": {
+      "get": {
+        "operationId": "getBenchmark",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Benchmark"
+      }
+    },
+    "/api/campaigns": {
+      "post": {
+        "operationId": "createCampaign",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Create Campaign"
+      }
+    },
+    "/api/campaigns/{campaign_id}": {
+      "delete": {
+        "operationId": "cancelCampaign",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignCancellation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Campaign"
+      },
+      "get": {
+        "operationId": "getCampaignState",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Campaign State"
+      }
+    },
+    "/api/campaigns/{campaign_id}/events": {
+      "get": {
+        "operationId": "streamCampaignEvents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pace_ms",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Pace Ms",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Campaign Events"
+      }
+    },
+    "/api/campaigns/{campaign_id}/trajectories/{trajectory_path}": {
+      "get": {
+        "operationId": "getCampaignTrajectory",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "trajectory_path",
+            "required": true,
+            "schema": {
+              "title": "Trajectory Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Campaign Trajectory"
+      }
+    },
+    "/api/exports/{campaign_id}": {
+      "get": {
+        "operationId": "listCampaignExports",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Campaign Exports"
+      }
+    },
+    "/api/exports/{campaign_id}/{artifact_name}": {
+      "get": {
+        "operationId": "getCampaignExport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "artifact_name",
+            "required": true,
+            "schema": {
+              "title": "Artifact Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Campaign Export"
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    }
+  }
+}

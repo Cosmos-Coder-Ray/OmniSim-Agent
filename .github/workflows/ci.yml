@@ -21,6 +21,7 @@ jobs:
           cache-dependency-glob: uv.lock
       - run: uv sync --locked
       - run: make check
+      - run: uv run python scripts/export_openapi.py --check
       - run: make test-slow
       - run: uv run python scripts/gen_mock_data.py
       - run: git diff --exit-code web/public/mock

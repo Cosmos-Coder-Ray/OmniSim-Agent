@@ -51,3 +51,10 @@
 - Verified: shield, verification, mitigation, export, CLI skip, and demo-copy unit tests pass. The real-sim ON/OFF verification case with eight scenarios passes using PyBullet DIRECT. The generated regression file passes when run with pytest. `make check` passes with 274 tests and four slow tests deselected.
 - Next: run `python scripts/run_campaign.py --budget 40 --verify` when ready for live LLM and campaign calls.
 - Blockers: no live campaign or LLM call was made. The 5% unsafe, 40% blocked, and 90% completion thresholds remain provisional.
+
+## Phase 9: FastAPI campaign backend
+
+- Implemented: spawned campaign jobs with cooperative cancellation, per-profile admission estimates and timeouts, atomic stage state, resumable SSE, health and artifact routes, recorded-run isolation, CORS and rate limits, OpenAPI export, and the API secret-scan smoke script.
+- Verified: `make check` passed after Groups 1–4 with 276, 286, 290, and 298 tests passed respectively; 5 slow tests were deselected each time. The nested-process shutdown test passed separately. The local API smoke returned the expected health, OpenAPI, benchmark, and not-found responses without reporting a secret leak. The OpenAPI drift check is current.
+- Next: replace the UNMEASURED token admission estimates after live runs with about 1.3 times measured per-run usage.
+- Blockers: no live Nebius or Tavily call was made, and quick-mode time was not measured. The token estimates are conservative admission checks, not guarantees.

@@ -3,19 +3,14 @@ from __future__ import annotations
 import argparse
 import os
 from collections.abc import Sequence
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
 from rich.console import Console
 
-from omnisim.agents.mitigator import facts_from_campaign, load_domain_bounds, mitigate
-from omnisim.core.exports import EXPORTS_DIR, export_campaign
+from omnisim.core.campaign_verify import run_campaign_verification
 from omnisim.core.orchestrator import RUNS_DIR, campaign_events
-from omnisim.core.verify import VerificationCriteria, refine_and_verify, write_verification
 from omnisim.schemas import CampaignEvent, StrategyName
-from omnisim.sim.detectors import DetectorConfig
-from omnisim.sim.limits import load_urdf_limits
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -67,92 +62,30 @@ def _print_verification(console: Console, label: str, result) -> None:
 
 
 def _verify_campaign(args: argparse.Namespace, outcome, console: Console) -> bool | None:
-    has_failures = any(episode.failures for episode in outcome.result.episodes)
-    if not has_failures:
-        console.print("verification skipped: campaign failures are absent", style="yellow")
-        return None
-    if not outcome.diagnoses:
-        console.print("verification skipped: campaign diagnoses are absent", style="yellow")
-        return None
-    if outcome.spec is None:
-        console.print("verification skipped: hardware evidence is unavailable", style="yellow")
-        return None
-
-    domain_bounds = load_domain_bounds(args.domain)
-    limits = load_urdf_limits()
-    facts = facts_from_campaign(outcome.clusters, outcome.result.episodes, outcome.shrinks)
-
-    def draft(iteration, previous, feedback):
-        del iteration
-        return mitigate(
-            robot=args.robot,
-            spec=outcome.spec,
-            diagnoses=outcome.diagnoses,
-            shrinks=outcome.shrinks,
-            facts_by_cluster=facts,
-            limits=limits,
-            domain_bounds=domain_bounds,
-            previous=previous,
-            tuning_feedback=feedback,
-            run_id=outcome.run_dir.name,
-        )
-
-    refinement = refine_and_verify(
-        draft,
-        campaign_seed=args.seed,
-        limits=limits,
-        workers=args.workers,
-        cfg=DetectorConfig(),
-        domain_bounds=domain_bounds,
-        discovery_episodes=outcome.result.episodes,
+    verification = run_campaign_verification(
+        outcome,
+        robot=getattr(args, "robot", "franka_panda"),
+        seed=getattr(args, "seed", 17),
+        workers=getattr(args, "workers", 1),
+        domain_path=getattr(args, "domain", None),
     )
-    base_verification = refinement.envelope.verification
-    verification = {
-        **base_verification,
-        "passed": refinement.confirmation.passed,
-        "provisional_criteria": {
-            "unsafe_rate_max": VerificationCriteria().unsafe_rate_max,
-            "blocked_rate_max": VerificationCriteria().blocked_rate_max,
-            "completion_rate_min": VerificationCriteria().completion_rate_min,
-        },
-        "tuning_seed": refinement.tuning_seed,
-        "confirmation_seed": refinement.confirmation_seed,
-        "tuning": [item.to_dict() for item in refinement.tuning_results],
-        "confirmation": refinement.confirmation.to_dict(),
-    }
-    envelope = refinement.envelope.model_copy(update={"verification": verification})
-    refinement = replace(refinement, envelope=envelope)
-    verification_path = outcome.run_dir / "verification.json"
-    write_verification(
-        verification_path,
-        {
-            "tuning_seed": refinement.tuning_seed,
-            "confirmation_seed": refinement.confirmation_seed,
-            "tuning": [item.to_dict() for item in refinement.tuning_results],
-            "confirmation": refinement.confirmation.to_dict(),
-        },
-    )
-    benchmark_path = Path(__file__).resolve().parents[1] / "data" / "benchmark.json"
-    artifacts = export_campaign(
-        outcome.run_dir.name,
-        envelope=envelope,
-        refinement=refinement,
-        shrinks=outcome.shrinks,
-        diagnoses=outcome.diagnoses,
-        spec=outcome.spec,
-        output_root=EXPORTS_DIR,
-        urdf_limits=limits,
-        benchmark_summary=benchmark_path if benchmark_path.is_file() else None,
-    )
+    if verification.skipped_reason is not None:
+        console.print(f"verification skipped: {verification.skipped_reason}", style="yellow")
+        return None
+    refinement = verification.refinement
+    if refinement is None:
+        return verification.passed
     for index, result in enumerate(refinement.tuning_results, 1):
         _print_verification(console, f"tuning {index}", result)
     _print_verification(console, "confirmation", refinement.confirmation)
     console.print(f"verification: {'passed' if refinement.confirmation.passed else 'failed'}")
-    console.print(f"verification file: {verification_path}")
-    console.print(f"exports: {artifacts.directory}")
-    for path in artifacts.files:
-        console.print(path)
-    return refinement.confirmation.passed
+    if verification.verification_path is not None:
+        console.print(f"verification file: {verification.verification_path}")
+    if verification.artifacts is not None:
+        console.print(f"exports: {verification.artifacts.directory}")
+        for path in verification.artifacts.files:
+            console.print(path)
+    return verification.passed
 
 
 def main(argv: Sequence[str] | None = None) -> int:

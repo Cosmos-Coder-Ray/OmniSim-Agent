@@ -186,6 +186,7 @@ class SpecReadyData(CampaignPayload):
     robot: str | None = None
     mismatch_count: int = 0
     error: str | None = None
+    spec_origin: Literal["built", "provided"] = "built"
 
 
 class ShrinkDoneData(CampaignPayload):
