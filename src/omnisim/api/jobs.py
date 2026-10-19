@@ -40,6 +40,8 @@ class JobRunner(Protocol):
 
     def queue_position(self, campaign_id: str) -> int | None: ...
 
+    def cancel(self, campaign_id: str) -> bool: ...
+
     def shutdown(self, grace_s: float = 5.0) -> None: ...
 
 
@@ -105,6 +107,24 @@ class ProcessJobRunner:
                     return index
         return None
 
+    def cancel(self, campaign_id: str) -> bool:
+        cancelled: JobConfig | None = None
+        with self._condition:
+            for config in self._queue:
+                if config.campaign_id == campaign_id:
+                    self._queue.remove(config)
+                    cancelled = config
+                    break
+            managed = self._active.get(campaign_id)
+            if managed is not None:
+                self._request_cancel(managed, "user")
+                self._condition.notify_all()
+                return True
+        if cancelled is not None:
+            self._on_finished(cancelled, JobExit("cancelled", None, False))
+            return True
+        return False
+
     def shutdown(self, grace_s: float = 5.0) -> None:
         with self._condition:
             self._closing = True
@@ -133,10 +153,10 @@ class ProcessJobRunner:
         process.join(timeout=0)
         exitcode = process.exitcode
         if managed.forced:
-            status = "interrupted" if managed.reason == "shutdown" else "error"
+            status = "error" if managed.reason == "error" else "interrupted"
         elif managed.reason == "error":
             status = "error"
-        elif managed.reason == "shutdown":
+        elif managed.reason in {"shutdown", "user"}:
             status = "cancelled"
         else:
             status = "completed" if exitcode == 0 else "error"

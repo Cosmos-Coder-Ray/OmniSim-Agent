@@ -89,6 +89,10 @@ class ApiStore:
         with sqlite3.connect(self.path, timeout=5) as db:
             db.execute(query, values)
 
+    def delete(self, campaign_id: str) -> None:
+        with sqlite3.connect(self.path, timeout=5) as db:
+            db.execute("DELETE FROM jobs WHERE campaign_id = ?", (campaign_id,))
+
     def get(self, campaign_id: str) -> JobRecord | None:
         with sqlite3.connect(self.path, timeout=5) as db:
             db.row_factory = sqlite3.Row

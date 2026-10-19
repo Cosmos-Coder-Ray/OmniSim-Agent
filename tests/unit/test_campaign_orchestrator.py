@@ -297,6 +297,42 @@ def test_generator_close_persists_cancellation_and_run_id_is_exclusive(tmp_path:
         run_campaign(**run_options(tmp_path, FakeRunner()))
 
 
+def test_campaign_reports_stages_in_pipeline_order(tmp_path: Path) -> None:
+    stages: list[str] = []
+    stream = campaign_events(
+        **run_options(tmp_path, FakeRunner(failures=True), budget=4, max_diagnosed=1),
+        on_stage=stages.append,
+    )
+    while True:
+        try:
+            next(stream)
+        except StopIteration as stop:
+            outcome = stop.value
+            break
+
+    assert stages == ["search", "shrink", "spec", "diagnosis"]
+    assert outcome.result.events[-1].data["status"] == "completed"
+
+
+def test_campaign_cancel_flag_completes_at_event_boundary(tmp_path: Path) -> None:
+    stages: list[str] = []
+    stream = campaign_events(
+        **run_options(tmp_path, FakeRunner(), budget=4),
+        on_stage=stages.append,
+        cancel_requested=lambda: True,
+    )
+    while True:
+        try:
+            next(stream)
+        except StopIteration as stop:
+            outcome = stop.value
+            break
+
+    assert outcome.result.events[-1].type == "campaign_done"
+    assert outcome.result.events[-1].data["status"] == "cancelled"
+    assert stages == ["search", "shrink", "spec", "diagnosis"]
+
+
 def test_fixed_run_is_deterministic_after_removing_time_fields(tmp_path: Path) -> None:
     first = run_campaign(**run_options(tmp_path / "first", FakeRunner()))
     second = run_campaign(**run_options(tmp_path / "second", FakeRunner()))
