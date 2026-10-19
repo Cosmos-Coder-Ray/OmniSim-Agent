@@ -62,7 +62,7 @@ def run_campaign_job(config: JobConfig) -> None:
             )
         )
         campaign_status = str(outcome.result.events[-1].data["status"])
-        if request.verify:
+        if request.verify and campaign_status != "cancelled":
             run_campaign_verification(
                 outcome,
                 robot=request.robot,
@@ -74,4 +74,5 @@ def run_campaign_job(config: JobConfig) -> None:
         write_stage(config, "done")
         _write_job_result(config, campaign_status)
     except Exception as error:
+        write_stage(config, "done")
         _write_job_result(config, "error", type(error).__name__)

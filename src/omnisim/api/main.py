@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import re
+import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import openai
 from fastapi import FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from openai import OpenAI
 from pydantic import ValidationError
 
 from omnisim.api.jobs import JobConfig, JobExit, JobRunner, ProcessJobRunner
@@ -22,6 +26,8 @@ from omnisim.api.models import (
     CampaignRequest,
     CampaignStage,
     CampaignState,
+    ExportsResponse,
+    HealthResponse,
 )
 from omnisim.api.paths import ApiPaths
 from omnisim.api.store import ApiStore, JobRecord
@@ -29,11 +35,25 @@ from omnisim.api.stream import EventTailer
 from omnisim.api.worker import run_campaign_job
 from omnisim.config import Settings
 from omnisim.core.orchestrator import _now
-from omnisim.llm.budget import get_usage_summary
-from omnisim.schemas import CampaignEvent
+from omnisim.knowledge.usage import get_knowledge_usage
+from omnisim.llm.budget import LLMUnavailable, get_usage_summary
+from omnisim.llm.models import Role, resolve_model
+from omnisim.schemas import BenchmarkResult, CampaignEvent
 
 CAMPAIGN_ID = re.compile(r"^[0-9a-f]{32}$")
 KEEPALIVE_S = 10.0
+EXPORT_FILES = frozenset(
+    {
+        "index.html",
+        "recorded_benchmark.json",
+        "repros.json",
+        "ros2_parameters.yaml",
+        "safe_envelope.json",
+        "test_safe_envelope.py",
+        "verification.json",
+    }
+)
+TRAJECTORY_PART = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _stage_file(path: Path) -> CampaignStage | None:
@@ -109,9 +129,69 @@ def _reconcile(store: ApiStore, paths: ApiPaths) -> None:
     for record in store.unfinished():
         run_dir = _run_path(paths, record.campaign_id)
         stage = _stage_file(run_dir / "stage.json") if run_dir is not None else None
-        store.set_status(
-            record.campaign_id, "completed" if stage == CampaignStage.DONE else "interrupted"
+        result = (
+            _read_job_result(run_dir / "job_result.json")
+            if stage == CampaignStage.DONE and run_dir is not None
+            else None
         )
+        status = result["status"] if result is not None else "completed"
+        if stage != CampaignStage.DONE:
+            status = "interrupted"
+        store.set_status(record.campaign_id, status)
+
+
+def _resolve_models(settings: Settings) -> dict[str, str | None]:
+    roles: tuple[Role, ...] = ("fast", "deep", "ultra")
+    if not settings.NEBIUS_API_KEY or not settings.NEBIUS_BASE_URL:
+        return dict.fromkeys(roles)
+    client = OpenAI(
+        api_key=settings.NEBIUS_API_KEY,
+        base_url=settings.NEBIUS_BASE_URL,
+        max_retries=0,
+        timeout=settings.OMNISIM_API_MODEL_RESOLUTION_TIMEOUT_S,
+    )
+    try:
+        return {role: resolve_model(client, role, settings=settings) for role in roles}
+    except (openai.OpenAIError, LLMUnavailable, ValueError):
+        return dict.fromkeys(roles)
+    finally:
+        client.close()
+
+
+def _start_model_resolution(app: FastAPI, settings: Settings) -> None:
+    app.state.model_resolution = None
+
+    def resolve() -> None:
+        app.state.model_resolution = _resolve_models(settings)
+
+    thread = threading.Thread(target=resolve, name="omnisim-model-resolution", daemon=True)
+    thread.start()
+
+
+def _file_response(path: Path, name: str) -> Response:
+    is_report = name == "index.html"
+    media_type = "text/html" if is_report else mimetypes.guess_type(name)[0]
+    headers = {
+        "Cache-Control": "private, no-cache",
+        "Content-Disposition": f'{"inline" if is_report else "attachment"}; filename="{name}"',
+        "X-Content-Type-Options": "nosniff",
+    }
+    if is_report:
+        headers["Content-Security-Policy"] = (
+            "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+            "form-action 'none'; frame-ancestors 'none'"
+        )
+    return Response(
+        path.read_bytes(),
+        media_type=media_type or "application/octet-stream",
+        headers=headers,
+    )
+
+
+def _pending_or_missing(record: JobRecord, message: str) -> JSONResponse:
+    if record.status in {"queued", "running"}:
+        return _error_response(202, "pending", message)
+    return _error_response(404, "not_found", message)
 
 
 def _error_response(status: int, error: str, message: str) -> JSONResponse:
@@ -134,6 +214,7 @@ def create_app(
         store = ApiStore(active_paths.database)
         store.initialize()
         _reconcile(store, active_paths)
+        _start_model_resolution(app, active_settings)
 
         def job_started(config: JobConfig) -> None:
             store.set_status(config.campaign_id, "running", at=clock().astimezone(UTC).isoformat())
@@ -168,6 +249,50 @@ def create_app(
     app.state.settings = active_settings
     app.state.paths = active_paths
     app.state.clock = clock
+    app.state.model_resolution = None
+
+    @app.get(
+        "/api/health",
+        response_model=HealthResponse,
+        operation_id="getHealth",
+    )
+    def health() -> HealthResponse:
+        recorded_runs = (
+            sorted(path.name for path in active_paths.demo_runs.iterdir() if path.is_dir())
+            if active_paths.demo_runs.is_dir()
+            else []
+        )
+        return HealthResponse(
+            demo_mode=active_settings.OMNISIM_DEMO_MODE,
+            demo_ready=False,
+            recorded_runs=recorded_runs,
+            queue=app.state.runner.queue_snapshot(),
+            token_usage=get_usage_summary(
+                cap=active_settings.OMNISIM_DAILY_TOKEN_CAP,
+                db_path=active_paths.data / "llm_usage.sqlite3",
+                now=clock(),
+            ),
+            knowledge_usage=get_knowledge_usage(
+                path=active_paths.data / "knowledge_calls.jsonl",
+                now=clock(),
+            ),
+            model_resolution=app.state.model_resolution,
+        )
+
+    @app.get(
+        "/api/benchmark",
+        response_model=BenchmarkResult,
+        operation_id="getBenchmark",
+        responses={404: {"model": ApiError}, 503: {"model": ApiError}},
+    )
+    def benchmark() -> BenchmarkResult | Response:
+        path = active_paths.data / "benchmark.json"
+        if path.is_symlink() or not path.is_file():
+            return _error_response(404, "not_found", "benchmark is unavailable")
+        try:
+            return BenchmarkResult.model_validate_json(path.read_bytes())
+        except ValidationError:
+            return _error_response(503, "invalid_benchmark", "saved benchmark is invalid")
 
     @app.post(
         "/api/campaigns",
@@ -303,6 +428,86 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.get(
+        "/api/campaigns/{campaign_id}/trajectories/{trajectory_path:path}",
+        operation_id="getCampaignTrajectory",
+        responses={202: {"model": ApiError}, 400: {"model": ApiError}, 404: {"model": ApiError}},
+    )
+    def campaign_trajectory(campaign_id: str, trajectory_path: str) -> Response:
+        run_dir = _run_path(active_paths, campaign_id)
+        record = app.state.store.get(campaign_id)
+        if run_dir is None or record is None:
+            return _error_response(404, "not_found", "campaign was not found")
+        parts = Path(trajectory_path).parts
+        if (
+            not parts
+            or Path(trajectory_path).is_absolute()
+            or any(part in {"", ".", ".."} or not TRAJECTORY_PART.fullmatch(part) for part in parts)
+            or not trajectory_path.endswith(".json")
+        ):
+            return _error_response(400, "invalid_path", "trajectory path is invalid")
+        root = run_dir / "trajectories"
+        target = root.joinpath(*parts)
+        if any(path.is_symlink() for path in (root, *target.parents[:-1], target)):
+            return _error_response(404, "not_found", "trajectory was not found")
+        try:
+            if not target.resolve().is_relative_to(root.resolve()):
+                return _error_response(404, "not_found", "trajectory was not found")
+        except OSError:
+            return _error_response(404, "not_found", "trajectory was not found")
+        if not target.is_file():
+            return _pending_or_missing(record, "trajectory is not available yet")
+        return _file_response(target, target.name)
+
+    @app.get(
+        "/api/exports/{campaign_id}",
+        response_model=ExportsResponse,
+        operation_id="listCampaignExports",
+        responses={202: {"model": ApiError}, 404: {"model": ApiError}},
+    )
+    def campaign_exports(campaign_id: str) -> ExportsResponse | Response:
+        if not CAMPAIGN_ID.fullmatch(campaign_id):
+            return _error_response(404, "not_found", "campaign was not found")
+        record = app.state.store.get(campaign_id)
+        if record is None:
+            return _error_response(404, "not_found", "campaign was not found")
+        root = active_paths.exports.resolve()
+        directory = active_paths.exports / campaign_id
+        if directory.is_symlink() or not directory.resolve().is_relative_to(root):
+            return _error_response(404, "not_found", "campaign exports were not found")
+        artifacts = (
+            sorted(
+                path.name
+                for path in directory.iterdir()
+                if path.is_file() and not path.is_symlink() and path.name in EXPORT_FILES
+            )
+            if directory.is_dir()
+            else []
+        )
+        if not artifacts:
+            return _pending_or_missing(record, "campaign exports are not available yet")
+        return ExportsResponse(campaign_id=campaign_id, status=record.status, artifacts=artifacts)
+
+    @app.get(
+        "/api/exports/{campaign_id}/{artifact_name}",
+        operation_id="getCampaignExport",
+        responses={202: {"model": ApiError}, 404: {"model": ApiError}},
+    )
+    def campaign_export(campaign_id: str, artifact_name: str) -> Response:
+        if not CAMPAIGN_ID.fullmatch(campaign_id) or artifact_name not in EXPORT_FILES:
+            return _error_response(404, "not_found", "export was not found")
+        record = app.state.store.get(campaign_id)
+        if record is None:
+            return _error_response(404, "not_found", "campaign was not found")
+        root = active_paths.exports.resolve()
+        directory = active_paths.exports / campaign_id
+        path = directory / artifact_name
+        if directory.is_symlink() or not directory.resolve().is_relative_to(root):
+            return _error_response(404, "not_found", "export was not found")
+        if path.is_symlink() or not path.is_file():
+            return _pending_or_missing(record, "export is not available yet")
+        return _file_response(path, artifact_name)
 
     @app.delete(
         "/api/campaigns/{campaign_id}",

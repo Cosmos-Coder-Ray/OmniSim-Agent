@@ -40,6 +40,8 @@ class JobRunner(Protocol):
 
     def queue_position(self, campaign_id: str) -> int | None: ...
 
+    def queue_snapshot(self) -> dict[str, int]: ...
+
     def cancel(self, campaign_id: str) -> bool: ...
 
     def shutdown(self, grace_s: float = 5.0) -> None: ...
@@ -106,6 +108,15 @@ class ProcessJobRunner:
                 if config.campaign_id == campaign_id:
                     return index
         return None
+
+    def queue_snapshot(self) -> dict[str, int]:
+        with self._condition:
+            return {
+                "queued": len(self._queue),
+                "running": len(self._active),
+                "max_concurrent": self._max_concurrent,
+                "max_queue": self._max_queue,
+            }
 
     def cancel(self, campaign_id: str) -> bool:
         cancelled: JobConfig | None = None

@@ -117,3 +117,9 @@ class HealthResponse(BaseModel):
     token_usage: dict[str, object]
     knowledge_usage: dict[str, int | str]
     model_resolution: dict[str, str | None] | None
+
+
+class ExportsResponse(BaseModel):
+    campaign_id: str
+    status: str
+    artifacts: list[str]
