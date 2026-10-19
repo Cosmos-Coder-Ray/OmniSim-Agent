@@ -9,6 +9,7 @@ from typing import Protocol
 import numpy as np
 
 from omnisim.agents.baselines import ProposalOrigin, Strategy, Trial, scenario_bounds
+from omnisim.core.shield import EpisodeBlocked
 from omnisim.schemas import EpisodeResult, ScenarioParams
 from omnisim.sim.detectors import DetectorConfig
 from omnisim.sim.limits import UrdfLimits
@@ -27,7 +28,7 @@ class BatchRunner(Protocol):
         workers: int,
         run_dir: Path | None = None,
         cfg: DetectorConfig = DetectorConfig(),
-    ) -> list[EpisodeResult | EpisodeError]: ...
+    ) -> list[EpisodeResult | EpisodeError | EpisodeBlocked]: ...
 
     def close(self) -> None: ...
 
@@ -39,6 +40,14 @@ class TrialBatch:
     origins: list[ProposalOrigin]
     trials: list[Trial]
     duration_s: float
+
+
+def _trial_error(result: EpisodeResult | EpisodeError | EpisodeBlocked) -> str | None:
+    if isinstance(result, EpisodeBlocked):
+        raise RuntimeError("campaign runner unexpectedly returned a blocked episode")
+    if isinstance(result, EpisodeResult):
+        return None
+    return f"{result.error_type}: {result.message}"
 
 
 def _sim_seed(benchmark_seed: int, sim_index: int) -> int:
@@ -87,11 +96,7 @@ def iter_trial_batches(
             Trial(
                 params=params,
                 result=result if isinstance(result, EpisodeResult) else None,
-                error=(
-                    None
-                    if isinstance(result, EpisodeResult)
-                    else f"{result.error_type}: {result.message}"
-                ),
+                error=_trial_error(result),
             )
             for params, result in zip(params_list, results, strict=True)
         ]

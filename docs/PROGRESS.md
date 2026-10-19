@@ -44,3 +44,10 @@
 - Verified: `make check` passes after each of the five commit groups. The separate budget-8 random campaign integration test passed with the real headless PyBullet simulator and injected spec/LLM functions. Demo-run tests validate source rewriting and overwrite protection.
 - Next: run `python scripts/run_campaign.py --budget 40` when the user is ready to make the live campaign calls.
 - Blockers: no live Nebius or Tavily call was made; the campaign has not been run against live LLM or knowledge services.
+
+## Phase 8: mitigation, verification, and exports
+
+- Implemented: deterministic shield decisions and runner-only rejection results; inverse-dynamics payload caps; evidence-grounded mitigation with a deterministic fallback; fixed-size tuning and confirmation verification; deterministic JSON, ROS 2 YAML, generated regression, and self-contained HTML exports; `--verify` and optional `--domain` CLI handling; demo export copying.
+- Verified: shield, verification, mitigation, export, CLI skip, and demo-copy unit tests pass. The real-sim ON/OFF verification case with eight scenarios passes using PyBullet DIRECT. The generated regression file passes when run with pytest. `make check` passes with 274 tests and four slow tests deselected.
+- Next: run `python scripts/run_campaign.py --budget 40 --verify` when ready for live LLM and campaign calls.
+- Blockers: no live campaign or LLM call was made. The 5% unsafe, 40% blocked, and 90% completion thresholds remain provisional.

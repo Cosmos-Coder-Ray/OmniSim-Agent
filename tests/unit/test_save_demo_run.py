@@ -79,6 +79,26 @@ def test_demo_run_refuses_overwrite_without_force_and_replaces_with_force(
     )
 
 
+def test_demo_run_copies_exports_into_demo_exports_directory(tmp_path: Path) -> None:
+    runs_root = tmp_path / "runs"
+    exports_root = tmp_path / "exports"
+    make_run(runs_root)
+    source = exports_root / "source-run"
+    source.mkdir(parents=True)
+    (source / "safe_envelope.json").write_text('{"version":"1"}\n', encoding="utf-8")
+
+    saved = save_demo_run(
+        "source-run",
+        runs_root=runs_root,
+        exports_root=exports_root,
+        demo_root=tmp_path / "demo_runs",
+    )
+
+    copied = saved.path / "exports" / "safe_envelope.json"
+    assert copied.read_text(encoding="utf-8") == '{"version":"1"}\n'
+    assert "exports/safe_envelope.json" in {name for name, _ in saved.files}
+
+
 @pytest.mark.parametrize("value", ["..", "../outside", "nested/name"])
 def test_demo_run_rejects_path_components(tmp_path: Path, value: str) -> None:
     with pytest.raises(ValueError):

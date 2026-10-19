@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from omnisim.core.orchestrator import campaign_events, run_campaign
+from omnisim.core.shield import EpisodeBlocked
 from omnisim.llm.budget import BudgetExceeded
 from omnisim.schemas import (
     CampaignEvent,
@@ -247,6 +248,18 @@ def test_nominal_failure_emits_started_then_error(tmp_path: Path) -> None:
     assert outcome.result.events[-1].data["status"] == "error"
     assert outcome.result.events[-1].data["stop_reason"] == "none"
     assert runner.closed
+
+
+def test_unexpected_blocked_nominal_is_reported_clearly(tmp_path: Path) -> None:
+    def blocked(params, limits, *, episode_id, run_dir, cfg):
+        return EpisodeBlocked(episode_id, params, ("unexpected block",))
+
+    outcome = run_campaign(**run_options(tmp_path, FakeRunner(), run_episode_fn=blocked))
+
+    assert outcome.result.events[0].data["baseline_error"] == (
+        "RuntimeError: campaign episode unexpectedly returned EpisodeBlocked"
+    )
+    assert outcome.result.events[-1].data["status"] == "error"
 
 
 def test_token_cap_is_a_separate_status_from_stop_reason(tmp_path: Path) -> None:
