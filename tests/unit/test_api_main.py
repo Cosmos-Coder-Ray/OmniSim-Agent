@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -11,6 +12,7 @@ from omnisim.api.paths import ApiPaths
 from omnisim.api.store import ApiStore
 from omnisim.api.worker import write_stage
 from omnisim.config import Settings
+from omnisim.schemas import CampaignEvent, CampaignResult
 
 
 class FakeRunner:
@@ -125,13 +127,14 @@ def test_startup_reconciles_terminal_stage_and_interrupted_job(tmp_path: Path) -
     done_dir.mkdir(parents=True)
     stale_dir.mkdir(parents=True)
     (done_dir / "stage.json").write_text('{"stage":"done"}', encoding="utf-8")
+    (done_dir / "job_result.json").write_text('{"status":"token_cap"}', encoding="utf-8")
     (stale_dir / "stage.json").write_text('{"stage":"diagnosis"}', encoding="utf-8")
 
     with TestClient(create_app(Settings(), job_runner=FakeRunner(), paths=paths)) as client:
         done = client.get(f"/api/campaigns/{done_id}")
         stale = client.get(f"/api/campaigns/{stale_id}")
 
-    assert done.json()["status"] == "completed"
+    assert done.json()["status"] == "token_cap"
     assert done.json()["stage"] == "done"
     assert stale.json()["status"] == "interrupted"
     assert stale.json()["stage"] == "diagnosis"
@@ -225,3 +228,162 @@ def test_campaign_trajectory_is_confined_to_run_trajectory_directory(tmp_path: P
     assert trajectory.status_code == 200
     assert trajectory.json() == {"steps": []}
     assert traversal.status_code in {400, 404}
+
+
+def _write_demo(paths: ApiPaths, name: str = "hero") -> None:
+    directory = paths.demo_runs / name
+    directory.mkdir(parents=True)
+    event = CampaignEvent(
+        seq=1,
+        ts=datetime(2026, 10, 19, tzinfo=UTC),
+        type="campaign_done",
+        data={
+            "status": "completed",
+            "stop_reason": "budget",
+            "sims_used": 8,
+            "shrink_sims": 0,
+            "clusters": 0,
+            "duration_s": 1.0,
+        },
+    )
+    campaign = CampaignResult(
+        robot="franka_panda",
+        budget=8,
+        strategy="random",
+        seed=17,
+        episodes=[],
+        events=[event],
+        source="recorded",
+    )
+    (directory / "campaign.json").write_text(campaign.model_dump_json(), encoding="utf-8")
+    (directory / "events.jsonl").write_text(event.model_dump_json() + "\n", encoding="utf-8")
+    exports = directory / "exports" / name
+    exports.mkdir(parents=True)
+    (exports / "index.html").write_text("<h1>recorded</h1>", encoding="utf-8")
+
+
+def test_demo_mode_serves_only_installed_recording_and_skips_live_services(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import omnisim.api.main as api_main
+
+    def fail_resolution(*args, **kwargs):
+        raise AssertionError("demo mode must not resolve live models")
+
+    monkeypatch.setattr(api_main, "resolve_model", fail_resolution)
+    paths = ApiPaths.from_root(tmp_path)
+    _write_demo(paths)
+    runner = FakeRunner()
+    settings = Settings(
+        OMNISIM_DEMO_MODE=True,
+        OMNISIM_API_DEMO_RUN="hero",
+        NEBIUS_API_KEY="configured-but-not-used",
+        NEBIUS_BASE_URL="https://example.invalid/v1/",
+    )
+
+    with TestClient(create_app(settings, job_runner=runner, paths=paths)) as client:
+        health = client.get("/api/health")
+        accepted = client.post("/api/campaigns", json={"quick": True})
+        state = client.get("/api/campaigns/hero")
+        stream = client.get("/api/campaigns/hero/events?pace_ms=2001")
+        report = client.get("/api/exports/hero/index.html")
+
+    assert health.json()["demo_ready"] is True
+    assert health.json()["recorded_runs"] == ["hero"]
+    assert health.json()["model_resolution"] is None
+    assert accepted.json()["source"] == "recorded"
+    assert accepted.json()["campaign_id"] == "hero"
+    assert runner.configs == []
+    assert state.json()["source"] == "recorded"
+    assert state.json()["stage"] == "done"
+    assert stream.headers["x-omnisim-source"] == "recorded"
+    assert "event: campaign_done" in stream.text
+    assert report.status_code == 200
+
+
+def test_missing_configured_demo_is_unavailable_and_warns_once(tmp_path: Path, caplog) -> None:
+    runner = FakeRunner()
+    settings = Settings(OMNISIM_DEMO_MODE=True, OMNISIM_API_DEMO_RUN="missing")
+
+    with TestClient(app_for(tmp_path, runner=runner, settings=settings)) as client:
+        health = client.get("/api/health")
+        response = client.post("/api/campaigns", json={"quick": True})
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.message == "configured demo run is unavailable"
+    ]
+    assert len(warnings) == 1
+    assert health.json()["demo_ready"] is False
+    assert response.status_code == 404
+    assert response.json()["error"] == "demo_unavailable"
+    assert runner.configs == []
+
+
+def test_rate_limit_omits_replay_link_when_no_recording_exists(tmp_path: Path) -> None:
+    settings = Settings(OMNISIM_API_POST_RATE_LIMIT="1/minute")
+
+    with TestClient(app_for(tmp_path, settings=settings)) as client:
+        first = client.post("/api/campaigns", json={"quick": True})
+        limited = client.post("/api/campaigns", json={"quick": True})
+
+    assert first.status_code == 202
+    assert limited.status_code == 429
+    assert "replay" not in limited.json()
+
+
+def test_profile_token_admission_uses_profile_minimum(tmp_path: Path) -> None:
+    settings = Settings(
+        OMNISIM_DAILY_TOKEN_CAP=50000,
+        OMNISIM_API_QUICK_MIN_TOKENS=10000,
+        OMNISIM_API_FULL_MIN_TOKENS=60000,
+        OMNISIM_API_FULL_VERIFY_MIN_TOKENS=70000,
+    )
+    runner = FakeRunner()
+
+    with TestClient(app_for(tmp_path, runner=runner, settings=settings)) as client:
+        quick = client.post("/api/campaigns", json={"quick": True})
+        full = client.post("/api/campaigns", json={})
+
+    assert quick.status_code == 202
+    assert full.status_code == 429
+    assert full.json()["error"] == "token_budget_unavailable"
+
+
+def test_rate_limit_includes_replay_link_when_recording_is_installed(tmp_path: Path) -> None:
+    paths = ApiPaths.from_root(tmp_path)
+    _write_demo(paths)
+    settings = Settings(OMNISIM_API_POST_RATE_LIMIT="1/minute")
+
+    with TestClient(create_app(settings, job_runner=FakeRunner(), paths=paths)) as client:
+        first = client.post("/api/campaigns", json={"quick": True})
+        limited = client.post("/api/campaigns", json={"quick": True})
+
+    assert first.status_code == 202
+    assert limited.status_code == 429
+    assert limited.json()["replay"] == "/api/campaigns/hero"
+
+
+def test_missing_export_is_pending_only_while_campaign_is_active(tmp_path: Path) -> None:
+    paths = ApiPaths.from_root(tmp_path)
+    with TestClient(create_app(Settings(), job_runner=FakeRunner(), paths=paths)) as client:
+        accepted = client.post("/api/campaigns", json={"quick": True})
+        campaign_id = accepted.json()["campaign_id"]
+        pending = client.get(f"/api/exports/{campaign_id}/safe_envelope.json")
+        ApiStore(paths.database).set_status(campaign_id, "completed")
+        missing = client.get(f"/api/exports/{campaign_id}/safe_envelope.json")
+
+    assert accepted.status_code == 202
+    assert pending.status_code == 202
+    assert missing.status_code == 404
+
+
+def test_cors_and_security_headers_are_configurable(tmp_path: Path) -> None:
+    settings = Settings(OMNISIM_API_CORS_ORIGINS="https://dashboard.example")
+
+    with TestClient(app_for(tmp_path, settings=settings)) as client:
+        response = client.get("/api/health", headers={"Origin": "https://dashboard.example"})
+
+    assert response.headers["access-control-allow-origin"] == "https://dashboard.example"
+    assert response.headers["x-content-type-options"] == "nosniff"

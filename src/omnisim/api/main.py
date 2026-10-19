@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
 import re
 import threading
@@ -13,9 +14,14 @@ from uuid import uuid4
 
 import openai
 from fastapi import FastAPI, Header, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from openai import OpenAI
 from pydantic import ValidationError
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from omnisim.api.jobs import JobConfig, JobExit, JobRunner, ProcessJobRunner
 from omnisim.api.models import (
@@ -38,10 +44,12 @@ from omnisim.core.orchestrator import _now
 from omnisim.knowledge.usage import get_knowledge_usage
 from omnisim.llm.budget import LLMUnavailable, get_usage_summary
 from omnisim.llm.models import Role, resolve_model
-from omnisim.schemas import BenchmarkResult, CampaignEvent
+from omnisim.schemas import BenchmarkResult, CampaignEvent, CampaignResult
 
 CAMPAIGN_ID = re.compile(r"^[0-9a-f]{32}$")
+DEMO_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 KEEPALIVE_S = 10.0
+log = logging.getLogger(__name__)
 EXPORT_FILES = frozenset(
     {
         "index.html",
@@ -74,8 +82,69 @@ def _run_path(paths: ApiPaths, campaign_id: str) -> Path | None:
     return target
 
 
+def _demo_path(paths: ApiPaths, name: str) -> Path | None:
+    if not DEMO_NAME.fullmatch(name):
+        return None
+    root = paths.demo_runs.resolve()
+    target = paths.demo_runs / name
+    if target.is_symlink() or not target.resolve().is_relative_to(root):
+        return None
+    return target if (target / "campaign.json").is_file() else None
+
+
+def _demo_names(paths: ApiPaths) -> list[str]:
+    if not paths.demo_runs.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in paths.demo_runs.iterdir()
+        if DEMO_NAME.fullmatch(path.name) and path.is_dir() and not path.is_symlink()
+    )
+
+
+def _recorded_campaign(paths: ApiPaths, name: str) -> tuple[Path, CampaignResult] | None:
+    directory = _demo_path(paths, name)
+    if directory is None:
+        return None
+    campaign_path = directory / "campaign.json"
+    if campaign_path.is_symlink() or not campaign_path.resolve().is_relative_to(
+        directory.resolve()
+    ):
+        return None
+    try:
+        campaign = CampaignResult.model_validate_json(campaign_path.read_bytes())
+    except (OSError, ValidationError):
+        return None
+    if campaign.source != "recorded":
+        return None
+    return directory, campaign
+
+
+def _replay_link(paths: ApiPaths, settings: Settings) -> str | None:
+    name = settings.OMNISIM_API_DEMO_RUN
+    return f"/api/campaigns/{name}" if _recorded_campaign(paths, name) is not None else None
+
+
+def _configured_demo_missing(settings: Settings, campaign_id: str) -> bool:
+    return settings.OMNISIM_DEMO_MODE and campaign_id == settings.OMNISIM_API_DEMO_RUN
+
+
+def _demo_unavailable() -> JSONResponse:
+    return _error_response(
+        404, "demo_unavailable", "the configured recorded campaign is unavailable"
+    )
+
+
 def _events(path: Path) -> list[CampaignEvent]:
-    return EventTailer(path / "events.jsonl").read_complete()
+    events_path = path / "events.jsonl"
+    if events_path.is_symlink():
+        return []
+    try:
+        if not events_path.resolve().is_relative_to(path.resolve()):
+            return []
+    except OSError:
+        return []
+    return EventTailer(events_path).read_complete()
 
 
 def _planned_stages(record: JobRecord | None) -> list[CampaignStage]:
@@ -99,6 +168,44 @@ def _progress(events: list[CampaignEvent]) -> CampaignProgress:
             progress.sims_used = int(event.data.get("sims_used", progress.sims_used))
             progress.clusters = int(event.data.get("clusters", progress.clusters))
     return progress
+
+
+def _recorded_state(name: str, directory: Path, campaign: CampaignResult) -> CampaignState:
+    verify = (directory / "exports" / name / "verification.json").is_file()
+    request = CampaignRequest(
+        robot="franka_panda",
+        strategy=campaign.strategy,
+        seed=campaign.seed,
+        budget=campaign.budget,
+        verify=verify,
+    )
+    terminal = next(
+        (event for event in reversed(campaign.events) if event.type == "campaign_done"), None
+    )
+    started = next((event for event in campaign.events if event.type == "campaign_started"), None)
+    started_at = (
+        str(started.data["started_at"])
+        if started is not None and started.data.get("started_at") is not None
+        else None
+    )
+    return CampaignState(
+        campaign_id=name,
+        status=str(terminal.data["status"]) if terminal is not None else "completed",
+        stage=CampaignStage.DONE,
+        stages=request.planned_stages(),
+        source="recorded",
+        config={
+            "robot": campaign.robot,
+            "strategy": campaign.strategy,
+            "seed": campaign.seed,
+            "budget": campaign.budget,
+            "verify": verify,
+        },
+        progress=_progress(campaign.events),
+        created_at=started_at,
+        started_at=started_at,
+        finished_at=(str(terminal.ts) if terminal is not None else None),
+    )
 
 
 def _profile_minimum(settings: Settings, campaign: CampaignRequest) -> int:
@@ -144,18 +251,20 @@ def _resolve_models(settings: Settings) -> dict[str, str | None]:
     roles: tuple[Role, ...] = ("fast", "deep", "ultra")
     if not settings.NEBIUS_API_KEY or not settings.NEBIUS_BASE_URL:
         return dict.fromkeys(roles)
-    client = OpenAI(
-        api_key=settings.NEBIUS_API_KEY,
-        base_url=settings.NEBIUS_BASE_URL,
-        max_retries=0,
-        timeout=settings.OMNISIM_API_MODEL_RESOLUTION_TIMEOUT_S,
-    )
+    client: OpenAI | None = None
     try:
+        client = OpenAI(
+            api_key=settings.NEBIUS_API_KEY,
+            base_url=settings.NEBIUS_BASE_URL,
+            max_retries=0,
+            timeout=settings.OMNISIM_API_MODEL_RESOLUTION_TIMEOUT_S,
+        )
         return {role: resolve_model(client, role, settings=settings) for role in roles}
     except (openai.OpenAIError, LLMUnavailable, ValueError):
         return dict.fromkeys(roles)
     finally:
-        client.close()
+        if client is not None:
+            client.close()
 
 
 def _start_model_resolution(app: FastAPI, settings: Settings) -> None:
@@ -194,9 +303,15 @@ def _pending_or_missing(record: JobRecord, message: str) -> JSONResponse:
     return _error_response(404, "not_found", message)
 
 
-def _error_response(status: int, error: str, message: str) -> JSONResponse:
-    body = ApiError(error=error, message=message)
-    return JSONResponse(status_code=status, content=body.model_dump())
+def _error_response(
+    status: int,
+    error: str,
+    message: str,
+    *,
+    replay: str | None = None,
+) -> JSONResponse:
+    body = ApiError(error=error, message=message, replay=replay)
+    return JSONResponse(status_code=status, content=body.model_dump(exclude_none=True))
 
 
 def create_app(
@@ -208,13 +323,24 @@ def create_app(
 ) -> FastAPI:
     active_settings = settings or Settings.from_env()
     active_paths = paths or ApiPaths.from_root()
+    limiter = Limiter(key_func=get_remote_address)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = ApiStore(active_paths.database)
         store.initialize()
         _reconcile(store, active_paths)
-        _start_model_resolution(app, active_settings)
+        app.state.recorded_runs = _demo_names(active_paths)
+        app.state.demo_ready = (
+            _recorded_campaign(active_paths, active_settings.OMNISIM_API_DEMO_RUN) is not None
+        )
+        if active_settings.OMNISIM_DEMO_MODE and not app.state.demo_ready:
+            log.warning(
+                "configured demo run is unavailable",
+                extra={"demo_run": active_settings.OMNISIM_API_DEMO_RUN},
+            )
+        if not active_settings.OMNISIM_DEMO_MODE:
+            _start_model_resolution(app, active_settings)
 
         def job_started(config: JobConfig) -> None:
             store.set_status(config.campaign_id, "running", at=clock().astimezone(UTC).isoformat())
@@ -250,22 +376,57 @@ def create_app(
     app.state.paths = active_paths
     app.state.clock = clock
     app.state.model_resolution = None
+    app.state.demo_ready = False
+    app.state.recorded_runs = []
+    app.state.limiter = limiter
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            origin.strip()
+            for origin in active_settings.OMNISIM_API_CORS_ORIGINS.split(",")
+            if origin.strip()
+        ],
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Last-Event-ID"],
+    )
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
+
+    def rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
+        del exc
+        return _error_response(
+            429,
+            "rate_limited",
+            "request rate limit exceeded",
+            replay=_replay_link(active_paths, active_settings),
+        )
+
+    app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
+
+    def validation_handler(request: Request, exc: Exception) -> JSONResponse:
+        del request, exc
+        return _error_response(422, "invalid_request", "request validation failed")
+
+    app.add_exception_handler(RequestValidationError, validation_handler)
 
     @app.get(
         "/api/health",
         response_model=HealthResponse,
         operation_id="getHealth",
     )
-    def health() -> HealthResponse:
-        recorded_runs = (
-            sorted(path.name for path in active_paths.demo_runs.iterdir() if path.is_dir())
-            if active_paths.demo_runs.is_dir()
-            else []
-        )
+    @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
+    def health(request: Request) -> HealthResponse:
+        del request
         return HealthResponse(
             demo_mode=active_settings.OMNISIM_DEMO_MODE,
-            demo_ready=False,
-            recorded_runs=recorded_runs,
+            demo_ready=app.state.demo_ready,
+            recorded_runs=app.state.recorded_runs,
             queue=app.state.runner.queue_snapshot(),
             token_usage=get_usage_summary(
                 cap=active_settings.OMNISIM_DAILY_TOKEN_CAP,
@@ -285,7 +446,9 @@ def create_app(
         operation_id="getBenchmark",
         responses={404: {"model": ApiError}, 503: {"model": ApiError}},
     )
-    def benchmark() -> BenchmarkResult | Response:
+    @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
+    def benchmark(request: Request) -> BenchmarkResult | Response:
+        del request
         path = active_paths.data / "benchmark.json"
         if path.is_symlink() or not path.is_file():
             return _error_response(404, "not_found", "benchmark is unavailable")
@@ -301,11 +464,28 @@ def create_app(
         operation_id="createCampaign",
         responses={429: {"model": ApiError}, 422: {"model": ApiError}},
     )
+    @limiter.limit(active_settings.OMNISIM_API_POST_RATE_LIMIT)
     def create_campaign(request: Request, campaign: CampaignRequest) -> CampaignAccepted | Response:
         del request
-        store: ApiStore = app.state.store
         if campaign.effective_budget > active_settings.OMNISIM_API_MAX_BUDGET:
             return _error_response(422, "invalid_budget", "budget exceeds the configured maximum")
+        if active_settings.OMNISIM_DEMO_MODE:
+            demo = _recorded_campaign(active_paths, active_settings.OMNISIM_API_DEMO_RUN)
+            if demo is None:
+                return _demo_unavailable()
+            directory, recorded = demo
+            state = _recorded_state(active_settings.OMNISIM_API_DEMO_RUN, directory, recorded)
+            verify = state.config.get("verify") is True
+            profile = "quick" if recorded.budget <= 10 else ("full+verify" if verify else "full")
+            return CampaignAccepted(
+                campaign_id=active_settings.OMNISIM_API_DEMO_RUN,
+                status=state.status,
+                source="recorded",
+                profile=profile,
+                budget=recorded.budget,
+                stages=state.stages,
+            )
+        store: ApiStore = app.state.store
         usage = get_usage_summary(
             cap=active_settings.OMNISIM_DAILY_TOKEN_CAP,
             db_path=active_paths.data / "llm_usage.sqlite3",
@@ -316,6 +496,7 @@ def create_app(
                 429,
                 "token_budget_unavailable",
                 "remaining daily token budget is below the profile admission estimate",
+                replay=_replay_link(active_paths, active_settings),
             )
 
         campaign_id = uuid4().hex
@@ -332,7 +513,12 @@ def create_app(
         accepted, queue_position = app.state.runner.submit(config)
         if not accepted:
             store.delete(campaign_id)
-            return _error_response(429, "queue_full", "campaign queue is full")
+            return _error_response(
+                429,
+                "queue_full",
+                "campaign queue is full",
+                replay=_replay_link(active_paths, active_settings),
+            )
         return CampaignAccepted(
             campaign_id=record.campaign_id,
             status="queued",
@@ -349,8 +535,16 @@ def create_app(
         operation_id="getCampaignState",
         responses={404: {"model": ApiError}},
     )
+    @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
     def campaign_state(campaign_id: str, request: Request) -> CampaignState | Response:
         del request
+        if not CAMPAIGN_ID.fullmatch(campaign_id):
+            demo = _recorded_campaign(active_paths, campaign_id)
+            if demo is not None:
+                return _recorded_state(campaign_id, *demo)
+            if _configured_demo_missing(active_settings, campaign_id):
+                return _demo_unavailable()
+            return _error_response(404, "not_found", "campaign was not found")
         run_dir = _run_path(active_paths, campaign_id)
         if run_dir is None:
             return _error_response(404, "not_found", "campaign was not found")
@@ -378,15 +572,29 @@ def create_app(
         operation_id="streamCampaignEvents",
         responses={400: {"model": ApiError}, 404: {"model": ApiError}},
     )
+    @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
     async def stream_campaign_events(
         campaign_id: str,
         request: Request,
         last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
         after: int | None = Query(default=None, ge=0),
+        pace_ms: int = Query(default=100),
     ) -> Response:
-        run_dir = _run_path(active_paths, campaign_id)
-        if run_dir is None or app.state.store.get(campaign_id) is None:
-            return _error_response(404, "not_found", "campaign was not found")
+        recorded = False
+        record: JobRecord | None = None
+        if CAMPAIGN_ID.fullmatch(campaign_id):
+            run_dir = _run_path(active_paths, campaign_id)
+            record = app.state.store.get(campaign_id)
+            if run_dir is None or record is None:
+                return _error_response(404, "not_found", "campaign was not found")
+        else:
+            demo = _recorded_campaign(active_paths, campaign_id)
+            if demo is None:
+                if _configured_demo_missing(active_settings, campaign_id):
+                    return _demo_unavailable()
+                return _error_response(404, "not_found", "campaign was not found")
+            run_dir = demo[0]
+            recorded = True
         requested_id = after
         if last_event_id is not None:
             try:
@@ -395,7 +603,10 @@ def create_app(
                 return _error_response(400, "invalid_event_id", "Last-Event-ID must be an integer")
         if requested_id is not None and requested_id < 0:
             return _error_response(400, "invalid_event_id", "event ID must not be negative")
-        tailer = EventTailer(run_dir / "events.jsonl")
+        events_path = run_dir / "events.jsonl"
+        if events_path.is_symlink() or not events_path.resolve().is_relative_to(run_dir.resolve()):
+            return _error_response(404, "not_found", "campaign events were not found")
+        tailer = EventTailer(events_path)
         tailer.resume_after(requested_id or 0)
         last_sent = requested_id or 0
 
@@ -404,6 +615,8 @@ def create_app(
             last_keepalive = asyncio.get_running_loop().time()
             while True:
                 for event in tailer.read_complete():
+                    if event.type == "campaign_done" and event.seq <= last_sent:
+                        return
                     if event.seq <= last_sent:
                         continue
                     last_sent = event.seq
@@ -411,9 +624,13 @@ def create_app(
                     yield f"id: {event.seq}\nevent: {event.type}\ndata: {data}\n\n"
                     if event.type == "campaign_done":
                         return
-                current = app.state.store.get(campaign_id)
+                    if recorded and pace_ms > 0:
+                        await asyncio.sleep(min(pace_ms, 2000) / 1000)
+                current = app.state.store.get(campaign_id) if not recorded else None
                 if current is not None and current.status == "interrupted":
                     yield 'event: stream_end\ndata: {"status":"interrupted"}\n\n'
+                    return
+                if recorded:
                     return
                 now = asyncio.get_running_loop().time()
                 if now - last_keepalive >= KEEPALIVE_S:
@@ -426,7 +643,11 @@ def create_app(
         return StreamingResponse(
             stream(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "X-OmniSim-Source": "recorded" if recorded else "live",
+            },
         )
 
     @app.get(
@@ -434,11 +655,23 @@ def create_app(
         operation_id="getCampaignTrajectory",
         responses={202: {"model": ApiError}, 400: {"model": ApiError}, 404: {"model": ApiError}},
     )
-    def campaign_trajectory(campaign_id: str, trajectory_path: str) -> Response:
-        run_dir = _run_path(active_paths, campaign_id)
-        record = app.state.store.get(campaign_id)
-        if run_dir is None or record is None:
-            return _error_response(404, "not_found", "campaign was not found")
+    @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
+    def campaign_trajectory(campaign_id: str, trajectory_path: str, request: Request) -> Response:
+        del request
+        recorded = not CAMPAIGN_ID.fullmatch(campaign_id)
+        if recorded:
+            demo = _recorded_campaign(active_paths, campaign_id)
+            if demo is None:
+                if _configured_demo_missing(active_settings, campaign_id):
+                    return _demo_unavailable()
+                return _error_response(404, "not_found", "campaign was not found")
+            run_dir = demo[0]
+            record = None
+        else:
+            run_dir = _run_path(active_paths, campaign_id)
+            record = app.state.store.get(campaign_id)
+            if run_dir is None or record is None:
+                return _error_response(404, "not_found", "campaign was not found")
         parts = Path(trajectory_path).parts
         if (
             not parts
@@ -457,6 +690,9 @@ def create_app(
         except OSError:
             return _error_response(404, "not_found", "trajectory was not found")
         if not target.is_file():
+            if recorded:
+                return _error_response(404, "not_found", "trajectory was not found")
+            assert record is not None
             return _pending_or_missing(record, "trajectory is not available yet")
         return _file_response(target, target.name)
 
@@ -466,15 +702,34 @@ def create_app(
         operation_id="listCampaignExports",
         responses={202: {"model": ApiError}, 404: {"model": ApiError}},
     )
-    def campaign_exports(campaign_id: str) -> ExportsResponse | Response:
-        if not CAMPAIGN_ID.fullmatch(campaign_id):
-            return _error_response(404, "not_found", "campaign was not found")
-        record = app.state.store.get(campaign_id)
-        if record is None:
-            return _error_response(404, "not_found", "campaign was not found")
-        root = active_paths.exports.resolve()
-        directory = active_paths.exports / campaign_id
-        if directory.is_symlink() or not directory.resolve().is_relative_to(root):
+    @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
+    def campaign_exports(campaign_id: str, request: Request) -> ExportsResponse | Response:
+        del request
+        recorded = not CAMPAIGN_ID.fullmatch(campaign_id)
+        if recorded:
+            demo = _recorded_campaign(active_paths, campaign_id)
+            if demo is None:
+                if _configured_demo_missing(active_settings, campaign_id):
+                    return _demo_unavailable()
+                return _error_response(404, "not_found", "campaign was not found")
+            base = demo[0] / "exports"
+            status = _recorded_state(campaign_id, *demo).status
+            record = None
+        else:
+            record = app.state.store.get(campaign_id)
+            if record is None:
+                return _error_response(404, "not_found", "campaign was not found")
+            base = active_paths.exports
+            status = record.status
+        root = base.parent.resolve()
+        export_root = base.resolve()
+        directory = base / campaign_id
+        if (
+            base.is_symlink()
+            or not export_root.is_relative_to(root)
+            or directory.is_symlink()
+            or not directory.resolve().is_relative_to(export_root)
+        ):
             return _error_response(404, "not_found", "campaign exports were not found")
         artifacts = (
             sorted(
@@ -486,26 +741,58 @@ def create_app(
             else []
         )
         if not artifacts:
+            if recorded:
+                return _error_response(404, "not_found", "campaign exports were not found")
+            assert record is not None
             return _pending_or_missing(record, "campaign exports are not available yet")
-        return ExportsResponse(campaign_id=campaign_id, status=record.status, artifacts=artifacts)
+        return ExportsResponse(campaign_id=campaign_id, status=status, artifacts=artifacts)
 
     @app.get(
         "/api/exports/{campaign_id}/{artifact_name}",
         operation_id="getCampaignExport",
         responses={202: {"model": ApiError}, 404: {"model": ApiError}},
     )
-    def campaign_export(campaign_id: str, artifact_name: str) -> Response:
-        if not CAMPAIGN_ID.fullmatch(campaign_id) or artifact_name not in EXPORT_FILES:
+    @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
+    def campaign_export(campaign_id: str, artifact_name: str, request: Request) -> Response:
+        del request
+        if artifact_name not in EXPORT_FILES:
             return _error_response(404, "not_found", "export was not found")
-        record = app.state.store.get(campaign_id)
-        if record is None:
-            return _error_response(404, "not_found", "campaign was not found")
-        root = active_paths.exports.resolve()
-        directory = active_paths.exports / campaign_id
+        recorded = not CAMPAIGN_ID.fullmatch(campaign_id)
+        if recorded:
+            demo = _recorded_campaign(active_paths, campaign_id)
+            if demo is None:
+                if (
+                    active_settings.OMNISIM_DEMO_MODE
+                    and campaign_id == active_settings.OMNISIM_API_DEMO_RUN
+                ):
+                    return _error_response(
+                        404,
+                        "demo_unavailable",
+                        "the configured recorded campaign is unavailable",
+                    )
+                return _error_response(404, "not_found", "campaign was not found")
+            base = demo[0] / "exports"
+            record = None
+        else:
+            record = app.state.store.get(campaign_id)
+            if record is None:
+                return _error_response(404, "not_found", "campaign was not found")
+            base = active_paths.exports
+        root = base.parent.resolve()
+        export_root = base.resolve()
+        directory = base / campaign_id
         path = directory / artifact_name
-        if directory.is_symlink() or not directory.resolve().is_relative_to(root):
+        if (
+            base.is_symlink()
+            or not export_root.is_relative_to(root)
+            or directory.is_symlink()
+            or not directory.resolve().is_relative_to(export_root)
+        ):
             return _error_response(404, "not_found", "export was not found")
         if path.is_symlink() or not path.is_file():
+            if recorded:
+                return _error_response(404, "not_found", "export was not found")
+            assert record is not None
             return _pending_or_missing(record, "export is not available yet")
         return _file_response(path, artifact_name)
 
@@ -516,6 +803,7 @@ def create_app(
         operation_id="cancelCampaign",
         responses={404: {"model": ApiError}, 409: {"model": ApiError}},
     )
+    @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
     def cancel_campaign(campaign_id: str, request: Request) -> CampaignCancellation | Response:
         del request
         if not CAMPAIGN_ID.fullmatch(campaign_id):
