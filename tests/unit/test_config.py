@@ -14,6 +14,20 @@ SETTING_NAMES = {
     "TAVILY_API_KEY",
     "OMNISIM_DAILY_TOKEN_CAP",
     "OMNISIM_DEMO_MODE",
+    "OMNISIM_API_CORS_ORIGINS",
+    "OMNISIM_API_POST_RATE_LIMIT",
+    "OMNISIM_API_OTHER_RATE_LIMIT",
+    "OMNISIM_API_MAX_CONCURRENT_CAMPAIGNS",
+    "OMNISIM_API_MAX_QUEUE",
+    "OMNISIM_API_MAX_BUDGET",
+    "OMNISIM_API_QUICK_MIN_TOKENS",
+    "OMNISIM_API_FULL_MIN_TOKENS",
+    "OMNISIM_API_FULL_VERIFY_MIN_TOKENS",
+    "OMNISIM_API_QUICK_TIMEOUT_S",
+    "OMNISIM_API_FULL_TIMEOUT_S",
+    "OMNISIM_API_FULL_VERIFY_TIMEOUT_S",
+    "OMNISIM_API_MODEL_RESOLUTION_TIMEOUT_S",
+    "OMNISIM_API_DEMO_RUN",
 }
 
 
@@ -31,6 +45,20 @@ def test_settings_use_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.TAVILY_API_KEY == ""
     assert settings.OMNISIM_DAILY_TOKEN_CAP == 400000
     assert settings.OMNISIM_DEMO_MODE is False
+    assert settings.OMNISIM_API_CORS_ORIGINS == "http://localhost:5173"
+    assert settings.OMNISIM_API_POST_RATE_LIMIT == "3/hour"
+    assert settings.OMNISIM_API_OTHER_RATE_LIMIT == "120/minute"
+    assert settings.OMNISIM_API_MAX_CONCURRENT_CAMPAIGNS == 1
+    assert settings.OMNISIM_API_MAX_QUEUE == 3
+    assert settings.OMNISIM_API_MAX_BUDGET == 100
+    assert settings.OMNISIM_API_QUICK_MIN_TOKENS == 60000
+    assert settings.OMNISIM_API_FULL_MIN_TOKENS == 200000
+    assert settings.OMNISIM_API_FULL_VERIFY_MIN_TOKENS == 250000
+    assert settings.OMNISIM_API_QUICK_TIMEOUT_S == 180
+    assert settings.OMNISIM_API_FULL_TIMEOUT_S == 1200
+    assert settings.OMNISIM_API_FULL_VERIFY_TIMEOUT_S == 3600
+    assert settings.OMNISIM_API_MODEL_RESOLUTION_TIMEOUT_S == 10
+    assert settings.OMNISIM_API_DEMO_RUN == "hero"
 
 
 def test_settings_read_process_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -68,6 +96,11 @@ def test_settings_read_process_environment(monkeypatch: pytest.MonkeyPatch) -> N
             "OMNISIM_DAILY_TOKEN_CAP must be an integer",
         ),
         ("OMNISIM_DEMO_MODE", "sometimes", "OMNISIM_DEMO_MODE must be a boolean"),
+        (
+            "OMNISIM_API_MAX_CONCURRENT_CAMPAIGNS",
+            "0",
+            "OMNISIM_API_MAX_CONCURRENT_CAMPAIGNS must be positive",
+        ),
     ],
 )
 def test_settings_reject_invalid_values(
