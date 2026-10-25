@@ -30,6 +30,7 @@ FAILURE_KINDS = (
     "collision",
     "instability",
 )
+MOCK_SEGMENT_LENGTHS_M = (0.125, 0.115, 0.11, 0.095, 0.09, 0.085, 0.075)
 
 
 def mock_evidence(claim: str, value: float | str, unit: str | None, slug: str) -> Evidence:
@@ -97,47 +98,64 @@ def build_envelope(hardware: HardwareSpec) -> SafeEnvelope:
     )
 
 
-def build_replay(rng: np.random.Generator) -> Replay:
-    events = [
-        FailureEvent(
-            kind="torque_saturation",
-            t=2.0,
-            joint=4,
-            severity=1.08,
-            detail={"limit_ratio": 1.08, "label": "[mock]"},
-        ),
-        FailureEvent(
-            kind="tracking_error",
-            t=4.0,
-            severity=0.74,
-            detail={"error_m": 0.074, "label": "[mock]"},
-        ),
-    ]
-    flags_by_frame: dict[int, list[FailureKind]] = {
-        60: [events[0].kind],
-        120: [events[1].kind],
-    }
+def mock_link_positions(
+    phase: float, phase_offset: float, jitter: np.ndarray
+) -> list[tuple[float, float, float]]:
+    links = [(0.0, 0.0, 0.04)]
+    for index, length in enumerate(MOCK_SEGMENT_LENGTHS_M):
+        yaw = 0.32 * np.sin(phase * 0.7 + index * 0.43 + phase_offset) + jitter[index + 1, 1]
+        pitch = (
+            0.55
+            + 0.3 * np.cos(phase + index * 0.41 + phase_offset)
+            + jitter[index + 1, 0]
+            + jitter[index + 1, 2]
+        )
+        direction = (
+            length * np.cos(pitch) * np.cos(yaw),
+            length * np.cos(pitch) * np.sin(yaw),
+            length * np.sin(pitch),
+        )
+        previous = links[-1]
+        links.append(tuple(round(previous[axis] + direction[axis], 6) for axis in range(3)))
+    return links
+
+
+def build_replay(
+    rng: np.random.Generator,
+    *,
+    episode_id: str = "ep_017",
+    failing: bool = True,
+    phase_offset: float = 0.0,
+) -> Replay:
+    events = []
+    if failing:
+        events = [
+            FailureEvent(
+                kind="torque_saturation",
+                t=2.0,
+                joint=4,
+                severity=1.08,
+                detail={"limit_ratio": 1.08, "label": "[mock]"},
+            ),
+            FailureEvent(
+                kind="tracking_error",
+                t=4.0,
+                severity=0.74,
+                detail={"error_m": 0.074, "label": "[mock]"},
+            ),
+        ]
+    flags_by_frame: dict[int, list[FailureKind]] = (
+        {60: [events[0].kind], 120: [events[1].kind]} if failing else {}
+    )
     frames: list[ReplayFrame] = []
     for index in range(180):
         t = index / 30
         phase = index / 179 * np.pi
         jitter = rng.normal(0.0, 0.002, size=(8, 3))
-        links = [
-            (
-                round(
-                    0.02 + joint * 0.065 + 0.025 * np.sin(phase + joint * 0.35) + jitter[joint, 0],
-                    4,
-                ),
-                round(0.02 * np.sin(phase * 0.7 + joint * 0.2) + jitter[joint, 1], 4),
-                round(
-                    0.1 + joint * 0.043 + 0.03 * np.sin(phase + joint * 0.25) + jitter[joint, 2], 4
-                ),
-            )
-            for joint in range(8)
-        ]
+        links = mock_link_positions(phase, phase_offset, jitter)
         tau_ratio = [round(float(value), 3) for value in rng.uniform(0.24, 0.82, size=7)]
         vel_ratio = [round(float(value), 3) for value in rng.uniform(0.2, 0.88, size=7)]
-        if index == 60:
+        if failing and index == 60:
             tau_ratio[4] = 1.08
         frames.append(
             ReplayFrame(
@@ -150,7 +168,7 @@ def build_replay(rng: np.random.Generator) -> Replay:
             )
         )
     return Replay(
-        episode_id="ep_017",
+        episode_id=episode_id,
         fps=30,
         frames=frames,
         events=events,
@@ -221,7 +239,13 @@ def generate() -> None:
     rng = np.random.default_rng(17017)
     hardware = build_hardware_spec()
     envelope = build_envelope(hardware)
-    replay = build_replay(rng)
+    replay = build_replay(rng, episode_id="ep_017", failing=True)
+    baseline_replay = build_replay(
+        np.random.default_rng(17016), episode_id="ep_016", failing=False, phase_offset=0.2
+    )
+    nominal_replay = build_replay(
+        np.random.default_rng(17018), episode_id="nominal", failing=False, phase_offset=-0.12
+    )
     fail_params = ScenarioParams(
         payload_kg=1.1,
         link_mass_scale=1.12,
@@ -394,7 +418,9 @@ def generate() -> None:
     benchmark = build_benchmark(rng)
     artifacts = {
         "campaign.json": campaign,
+        "episode_ep_016.json": baseline_replay,
         "episode_ep_017.json": replay,
+        "episode_nominal.json": nominal_replay,
         "benchmark.json": benchmark,
         "envelope.json": envelope,
         "evidence.json": hardware,

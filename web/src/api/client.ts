@@ -81,34 +81,45 @@ function mockCampaignView(id: string, campaign: MockCampaign): CampaignView {
   };
 }
 
-export const dataClient: DataClient = {
-  async getCampaign(id) {
-    if (dataMode === "mock") {
+export function createApiClient(base = apiBase): DataClient {
+  const root = base.replace(/\/$/, "");
+  return {
+    getCampaign(id) {
+      return request<CampaignView>(`${root}/campaigns/${encodeURIComponent(id)}`);
+    },
+
+    getTrajectory(campaignId, trajectoryId) {
+      return request<Replay>(
+        `${root}/campaigns/${encodeURIComponent(campaignId)}/trajectories/${trajectoryId
+          .split("/")
+          .map(encodeURIComponent)
+          .join("/")}`,
+      );
+    },
+
+    getHealth() {
+      return request<HealthResponse>(`${root}/health`);
+    },
+  };
+}
+
+function createMockClient(): DataClient {
+  return {
+    async getCampaign(id) {
       const result = await mockJson<MockCampaign>("/mock/campaign.json");
       return result.kind === "ok"
         ? { kind: "ok", data: mockCampaignView(id, result.data) }
         : result;
-    }
-    return request<CampaignView>(`${apiBase}/campaigns/${encodeURIComponent(id)}`);
-  },
+    },
 
-  getTrajectory(campaignId, trajectoryId) {
-    if (dataMode === "mock") {
-      const episodeId = trajectoryId === "nominal" ? "nominal" : trajectoryId;
-      return mockJson<Replay>(`/mock/episode_${encodeURIComponent(episodeId)}.json`);
-    }
-    return request<Replay>(
-      `${apiBase}/campaigns/${encodeURIComponent(campaignId)}/trajectories/${trajectoryId
-        .split("/")
-        .map(encodeURIComponent)
-        .join("/")}`,
-    );
-  },
+    getTrajectory(_campaignId, trajectoryId) {
+      return mockJson<Replay>(`/mock/episode_${encodeURIComponent(trajectoryId)}.json`);
+    },
 
-  getHealth() {
-    if (dataMode === "mock") {
+    getHealth() {
       return Promise.resolve({ kind: "unavailable", reason: "Health is unavailable in mock mode." });
-    }
-    return request<HealthResponse>(`${apiBase}/health`);
-  },
-};
+    },
+  };
+}
+
+export const dataClient: DataClient = dataMode === "api" ? createApiClient() : createMockClient();

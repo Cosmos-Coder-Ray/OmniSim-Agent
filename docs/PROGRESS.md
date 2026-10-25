@@ -60,3 +60,10 @@
 - Verified for the episode contract: `make check` passed with 310 tests and 5 slow tests deselected; `uv run python scripts/export_openapi.py --check` reported the export current. Both commands emitted the existing optional `cma` matplotlib warning.
 - Next: replace the UNMEASURED token admission estimates after live runs with about 1.3 times measured per-run usage.
 - Blockers: no live Nebius or Tavily call was made, and quick-mode time was not measured. The token estimates are conservative admission checks, not guarantees.
+
+## Phase 10A: replay web shell
+
+- Implemented: scaffold, pinned toolchain, generated API type aliases, mock/API data client, responsive shell, URL state, replay geometry utilities, replay validation, and deterministic mock replay fixtures.
+- Verified: group 1 `make web-check` and `make check` passed; group 2 checks are in progress.
+- Next: render and control the replay, then add browser acceptance and screenshot coverage.
+- Blockers: Playwright has not run; no browser performance measurement has been made.

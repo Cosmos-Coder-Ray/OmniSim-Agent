@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { dataClient, dataMode } from "../api/client";
 import type { CampaignView, DataResult, Replay } from "../api/types";
+import { validateReplay } from "../replay/validation";
 import { DEFAULT_CAMPAIGN, tabs, useUrlStore } from "../state/urlStore";
 import { PlaceholderTab } from "./PlaceholderTab";
 import { ReplayView } from "./ReplayView";
@@ -86,14 +87,20 @@ export function AppShell() {
   useEffect(() => {
     if (!campaignId || !selectedEpisode) return;
     let active = true;
-    const trajectoryId = selectedEpisode.trajectory_path ?? selectedEpisode.episode_id;
+    const trajectoryId = dataMode === "mock"
+      ? selectedEpisode.episode_id
+      : selectedEpisode.trajectory_path ?? selectedEpisode.episode_id;
     void dataClient.getTrajectory(campaignId, trajectoryId).then((result) => {
       if (active) {
+        const validation = result.kind === "ok" ? validateReplay(result.data) : null;
+        const replayResult = validation && !validation.ok
+          ? { kind: "error" as const, message: validation.error }
+          : result;
         setReplayResponse({
           campaignId,
           episodeId: selectedEpisode.episode_id,
           attempt: retryCount,
-          result,
+          result: replayResult,
         });
       }
     });
