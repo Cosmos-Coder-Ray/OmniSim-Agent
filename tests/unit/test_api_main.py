@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from omnisim.api.jobs import JobConfig
@@ -12,7 +13,7 @@ from omnisim.api.paths import ApiPaths
 from omnisim.api.store import ApiStore
 from omnisim.api.worker import write_stage
 from omnisim.config import Settings
-from omnisim.schemas import CampaignEvent, CampaignResult
+from omnisim.schemas import CampaignEvent, CampaignResult, EpisodeResult, ScenarioParams
 
 
 class FakeRunner:
@@ -230,6 +231,128 @@ def test_campaign_trajectory_is_confined_to_run_trajectory_directory(tmp_path: P
     assert traversal.status_code in {400, 404}
 
 
+def _episode(episode_id: str, *, risk: float = 0.1) -> EpisodeResult:
+    return EpisodeResult(
+        episode_id=episode_id,
+        params=ScenarioParams(seed=17),
+        failures=[],
+        risk=risk,
+        max_tau_ratio=0.2,
+        max_vel_ratio=0.3,
+        final_ee_error_m=0.01,
+        min_manipulability=0.5,
+    )
+
+
+def test_active_campaign_episodes_are_unavailable_until_terminal(tmp_path: Path) -> None:
+    paths = ApiPaths.from_root(tmp_path)
+    with TestClient(create_app(Settings(), job_runner=FakeRunner(), paths=paths)) as client:
+        campaign_id = client.post("/api/campaigns", json={"quick": True}).json()["campaign_id"]
+        for status in ("queued", "running"):
+            ApiStore(paths.database).set_status(campaign_id, status)
+            response = client.get(f"/api/campaigns/{campaign_id}")
+            assert response.status_code == 200
+            assert response.json()["status"] == status
+            assert response.json()["episodes"] is None
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["completed", "cancelled", "error", "interrupted", "token_cap", "no_failures_found"],
+)
+def test_terminal_campaign_statuses_return_episode_list(tmp_path: Path, status: str) -> None:
+    paths = ApiPaths.from_root(tmp_path)
+    with TestClient(create_app(Settings(), job_runner=FakeRunner(), paths=paths)) as client:
+        campaign_id = client.post("/api/campaigns", json={"quick": True}).json()["campaign_id"]
+        run_dir = paths.runs / campaign_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "episodes.jsonl").write_text(
+            _episode("done").model_dump_json() + "\n", encoding="utf-8"
+        )
+        ApiStore(paths.database).set_status(campaign_id, status)
+
+        response = client.get(f"/api/campaigns/{campaign_id}")
+
+    assert response.status_code == 200
+    assert [episode["episode_id"] for episode in response.json()["episodes"]] == ["done"]
+
+
+def test_terminal_campaign_returns_ordered_complete_records_and_ignores_partial_line(
+    tmp_path: Path,
+) -> None:
+    paths = ApiPaths.from_root(tmp_path)
+    with TestClient(create_app(Settings(), job_runner=FakeRunner(), paths=paths)) as client:
+        campaign_id = client.post("/api/campaigns", json={"quick": True}).json()["campaign_id"]
+        run_dir = paths.runs / campaign_id
+        run_dir.mkdir(parents=True)
+        first = _episode("first")
+        second = _episode("second", risk=0.2)
+        content = (
+            first.model_dump_json()
+            + "\n"
+            + second.model_dump_json()
+            + "\n"
+            + '{"episode_id":"partial'
+        )
+        (run_dir / "episodes.jsonl").write_text(content, encoding="utf-8")
+        ApiStore(paths.database).set_status(campaign_id, "completed")
+
+        response = client.get(f"/api/campaigns/{campaign_id}")
+
+    assert response.status_code == 200
+    assert [episode["episode_id"] for episode in response.json()["episodes"]] == ["first", "second"]
+    assert [episode["risk"] for episode in response.json()["episodes"]] == [0.1, 0.2]
+
+
+def test_terminal_campaign_without_episode_records_returns_empty_list(tmp_path: Path) -> None:
+    paths = ApiPaths.from_root(tmp_path)
+    with TestClient(create_app(Settings(), job_runner=FakeRunner(), paths=paths)) as client:
+        campaign_id = client.post("/api/campaigns", json={"quick": True}).json()["campaign_id"]
+        run_dir = paths.runs / campaign_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "episodes.jsonl").write_bytes(b"")
+        ApiStore(paths.database).set_status(campaign_id, "no_failures_found")
+
+        response = client.get(f"/api/campaigns/{campaign_id}")
+
+    assert response.status_code == 200
+    assert response.json()["episodes"] == []
+
+
+def test_malformed_complete_episode_line_returns_generic_error_without_partial_data(
+    tmp_path: Path, caplog
+) -> None:
+    paths = ApiPaths.from_root(tmp_path)
+    with TestClient(create_app(Settings(), job_runner=FakeRunner(), paths=paths)) as client:
+        campaign_id = client.post("/api/campaigns", json={"quick": True}).json()["campaign_id"]
+        run_dir = paths.runs / campaign_id
+        run_dir.mkdir(parents=True)
+        safe = _episode("safe").model_dump_json()
+        sensitive = '{"private_payload":"episode contents must not escape"}'
+        (run_dir / "episodes.jsonl").write_text(f"{safe}\n{sensitive}\n", encoding="utf-8")
+        ApiStore(paths.database).set_status(campaign_id, "error")
+
+        response = client.get(f"/api/campaigns/{campaign_id}")
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": "internal_error",
+        "message": "campaign episodes are unavailable",
+    }
+    assert "episode contents must not escape" not in response.text
+    assert str(paths.runs) not in response.text
+    assert "campaign episodes log is malformed" in caplog.text
+    assert "episode contents must not escape" not in caplog.text
+
+
+def test_unknown_campaign_state_returns_not_found(tmp_path: Path) -> None:
+    with TestClient(app_for(tmp_path)) as client:
+        response = client.get("/api/campaigns/unknown")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "not_found"
+
+
 def _write_demo(paths: ApiPaths, name: str = "hero") -> None:
     directory = paths.demo_runs / name
     directory.mkdir(parents=True)
@@ -251,12 +374,18 @@ def _write_demo(paths: ApiPaths, name: str = "hero") -> None:
         budget=8,
         strategy="random",
         seed=17,
-        episodes=[],
+        episodes=[_episode("recorded_first"), _episode("recorded_second", risk=0.2)],
         events=[event],
         source="recorded",
     )
     (directory / "campaign.json").write_text(campaign.model_dump_json(), encoding="utf-8")
     (directory / "events.jsonl").write_text(event.model_dump_json() + "\n", encoding="utf-8")
+    trajectories = directory / "trajectories"
+    trajectories.mkdir()
+    (trajectories / "nominal.json").write_text('{"episode_id":"nominal"}', encoding="utf-8")
+    (trajectories / "shrunk_tracking_error_global.json").write_text(
+        '{"episode_id":"shrunk"}', encoding="utf-8"
+    )
     exports = directory / "exports" / name
     exports.mkdir(parents=True)
     (exports / "index.html").write_text("<h1>recorded</h1>", encoding="utf-8")
@@ -296,9 +425,31 @@ def test_demo_mode_serves_only_installed_recording_and_skips_live_services(
     assert runner.configs == []
     assert state.json()["source"] == "recorded"
     assert state.json()["stage"] == "done"
+    assert [episode["episode_id"] for episode in state.json()["episodes"]] == [
+        "recorded_first",
+        "recorded_second",
+    ]
     assert stream.headers["x-omnisim-source"] == "recorded"
     assert "event: campaign_done" in stream.text
     assert report.status_code == 200
+
+
+def test_recorded_campaign_serves_nominal_and_shrunk_trajectories(tmp_path: Path) -> None:
+    paths = ApiPaths.from_root(tmp_path)
+    _write_demo(paths)
+
+    with TestClient(create_app(Settings(), job_runner=FakeRunner(), paths=paths)) as client:
+        nominal = client.get("/api/campaigns/hero/trajectories/nominal.json")
+        shrunk = client.get("/api/campaigns/hero/trajectories/shrunk_tracking_error_global.json")
+        unknown_trajectory = client.get("/api/campaigns/hero/trajectories/missing.json")
+        unknown_campaign = client.get("/api/campaigns/missing/trajectories/nominal.json")
+
+    assert nominal.status_code == 200
+    assert nominal.json() == {"episode_id": "nominal"}
+    assert shrunk.status_code == 200
+    assert shrunk.json() == {"episode_id": "shrunk"}
+    assert unknown_trajectory.status_code == 404
+    assert unknown_campaign.status_code == 404
 
 
 def test_missing_configured_demo_is_unavailable_and_warns_once(tmp_path: Path, caplog) -> None:
