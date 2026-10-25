@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from omnisim.schemas import StrategyName
+from omnisim.schemas import EpisodeResult, StrategyName
 
 QUICK_BUDGET = 10
 QUICK_STOP_AFTER_CLUSTERS = 1
@@ -91,6 +91,7 @@ class CampaignState(BaseModel):
     source: Literal["live", "recorded"]
     config: dict[str, object]
     progress: CampaignProgress
+    episodes: list[EpisodeResult] | None = None
     created_at: str | None = None
     started_at: str | None = None
     finished_at: str | None = None

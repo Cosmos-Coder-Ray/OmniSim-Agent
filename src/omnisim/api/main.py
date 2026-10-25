@@ -44,7 +44,7 @@ from omnisim.core.orchestrator import _now
 from omnisim.knowledge.usage import get_knowledge_usage
 from omnisim.llm.budget import LLMUnavailable, get_usage_summary
 from omnisim.llm.models import Role, resolve_model
-from omnisim.schemas import BenchmarkResult, CampaignEvent, CampaignResult
+from omnisim.schemas import BenchmarkResult, CampaignEvent, CampaignResult, EpisodeResult
 
 CAMPAIGN_ID = re.compile(r"^[0-9a-f]{32}$")
 DEMO_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -62,6 +62,9 @@ EXPORT_FILES = frozenset(
     }
 )
 TRAJECTORY_PART = re.compile(r"^[A-Za-z0-9_.-]+$")
+TERMINAL_STATUSES = frozenset(
+    {"completed", "cancelled", "error", "interrupted", "token_cap", "no_failures_found"}
+)
 
 
 def _stage_file(path: Path) -> CampaignStage | None:
@@ -147,6 +150,33 @@ def _events(path: Path) -> list[CampaignEvent]:
     return EventTailer(events_path).read_complete()
 
 
+def _episodes(path: Path, campaign_id: str) -> list[EpisodeResult] | None:
+    episodes_path = path / "episodes.jsonl"
+    try:
+        if episodes_path.is_symlink() or not episodes_path.resolve().is_relative_to(path.resolve()):
+            raise OSError("episode log is outside campaign directory")
+        content = episodes_path.read_bytes()
+    except FileNotFoundError:
+        return []
+    except OSError:
+        log.error("campaign episodes log is unavailable for %s", campaign_id)
+        return None
+
+    complete_lines = content.split(b"\n")
+    complete_lines.pop()
+
+    episodes: list[EpisodeResult] = []
+    try:
+        for line in complete_lines:
+            if not line:
+                raise ValueError("empty episode record")
+            episodes.append(EpisodeResult.model_validate_json(line))
+    except (ValidationError, ValueError):
+        log.error("campaign episodes log is malformed for %s", campaign_id)
+        return None
+    return episodes
+
+
 def _planned_stages(record: JobRecord | None) -> list[CampaignStage]:
     if record is None:
         return []
@@ -202,6 +232,7 @@ def _recorded_state(name: str, directory: Path, campaign: CampaignResult) -> Cam
             "verify": verify,
         },
         progress=_progress(campaign.events),
+        episodes=campaign.episodes,
         created_at=started_at,
         started_at=started_at,
         finished_at=(str(terminal.ts) if terminal is not None else None),
@@ -533,7 +564,7 @@ def create_app(
         "/api/campaigns/{campaign_id}",
         response_model=CampaignState,
         operation_id="getCampaignState",
-        responses={404: {"model": ApiError}},
+        responses={404: {"model": ApiError}, 500: {"model": ApiError}},
     )
     @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
     def campaign_state(campaign_id: str, request: Request) -> CampaignState | Response:
@@ -553,6 +584,11 @@ def create_app(
             return _error_response(404, "not_found", "campaign was not found")
         events = _events(run_dir)
         stage = _stage_file(run_dir / "stage.json")
+        episodes = None
+        if record.status in TERMINAL_STATUSES:
+            episodes = _episodes(run_dir, campaign_id)
+            if episodes is None:
+                return _error_response(500, "internal_error", "campaign episodes are unavailable")
         return CampaignState(
             campaign_id=campaign_id,
             status=record.status,
@@ -561,6 +597,7 @@ def create_app(
             source="live",
             config=record.config,
             progress=_progress(events),
+            episodes=episodes,
             created_at=record.created_at,
             started_at=record.started_at,
             finished_at=record.finished_at,

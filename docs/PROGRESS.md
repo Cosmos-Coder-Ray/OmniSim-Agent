@@ -55,6 +55,8 @@
 ## Phase 9: FastAPI campaign backend
 
 - Implemented: spawned campaign jobs with cooperative cancellation, per-profile admission estimates and timeouts, atomic stage state, resumable SSE, health and artifact routes, recorded-run isolation, CORS and rate limits, OpenAPI export, and the API secret-scan smoke script.
+- Implemented: campaign state episode lists for terminal and recorded runs, with complete-line validation for live `episodes.jsonl` files and an all-or-nothing generic error on malformed records.
 - Verified: `make check` passed after Groups 1–4 with 276, 286, 290, and 298 tests passed respectively; 5 slow tests were deselected each time. The nested-process shutdown test passed separately. The local API smoke returned the expected health, OpenAPI, benchmark, and not-found responses without reporting a secret leak. The OpenAPI drift check is current.
+- Verified for the episode contract: `make check` passed with 310 tests and 5 slow tests deselected; `uv run python scripts/export_openapi.py --check` reported the export current. Both commands emitted the existing optional `cma` matplotlib warning.
 - Next: replace the UNMEASURED token admission estimates after live runs with about 1.3 times measured per-run usage.
 - Blockers: no live Nebius or Tavily call was made, and quick-mode time was not measured. The token estimates are conservative admission checks, not guarantees.

@@ -287,6 +287,20 @@
             ],
             "title": "Created At"
           },
+          "episodes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/EpisodeResult"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Episodes"
+          },
           "finished_at": {
             "anyOf": [
               {
@@ -364,6 +378,67 @@
         "title": "CampaignState",
         "type": "object"
       },
+      "EpisodeResult": {
+        "properties": {
+          "episode_id": {
+            "title": "Episode Id",
+            "type": "string"
+          },
+          "failures": {
+            "items": {
+              "$ref": "#/components/schemas/FailureEvent"
+            },
+            "title": "Failures",
+            "type": "array"
+          },
+          "final_ee_error_m": {
+            "title": "Final Ee Error M",
+            "type": "number"
+          },
+          "max_tau_ratio": {
+            "title": "Max Tau Ratio",
+            "type": "number"
+          },
+          "max_vel_ratio": {
+            "title": "Max Vel Ratio",
+            "type": "number"
+          },
+          "min_manipulability": {
+            "title": "Min Manipulability",
+            "type": "number"
+          },
+          "params": {
+            "$ref": "#/components/schemas/ScenarioParams"
+          },
+          "risk": {
+            "title": "Risk",
+            "type": "number"
+          },
+          "trajectory_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trajectory Path"
+          }
+        },
+        "required": [
+          "episode_id",
+          "params",
+          "failures",
+          "risk",
+          "max_tau_ratio",
+          "max_vel_ratio",
+          "final_ee_error_m",
+          "min_manipulability"
+        ],
+        "title": "EpisodeResult",
+        "type": "object"
+      },
       "ExportsResponse": {
         "properties": {
           "artifacts": {
@@ -388,6 +463,54 @@
           "artifacts"
         ],
         "title": "ExportsResponse",
+        "type": "object"
+      },
+      "FailureEvent": {
+        "properties": {
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "joint": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Joint"
+          },
+          "kind": {
+            "enum": [
+              "torque_saturation",
+              "joint_limit",
+              "velocity_limit",
+              "tracking_error",
+              "singularity",
+              "collision",
+              "instability"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "number"
+          },
+          "t": {
+            "title": "T",
+            "type": "number"
+          }
+        },
+        "required": [
+          "kind",
+          "t",
+          "severity"
+        ],
+        "title": "FailureEvent",
         "type": "object"
       },
       "FirstFailureSummary": {
@@ -545,6 +668,87 @@
           "std"
         ],
         "title": "MeanStd",
+        "type": "object"
+      },
+      "ScenarioParams": {
+        "properties": {
+          "joint_damping": {
+            "default": 0.0,
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Joint Damping",
+            "type": "number"
+          },
+          "kp_scale": {
+            "default": 1.0,
+            "maximum": 2.0,
+            "minimum": 0.5,
+            "title": "Kp Scale",
+            "type": "number"
+          },
+          "latency_ticks": {
+            "default": 0,
+            "maximum": 12.0,
+            "minimum": 0.0,
+            "title": "Latency Ticks",
+            "type": "integer"
+          },
+          "link_mass_scale": {
+            "default": 1.0,
+            "maximum": 1.5,
+            "minimum": 0.7,
+            "title": "Link Mass Scale",
+            "type": "number"
+          },
+          "payload_kg": {
+            "default": 0.0,
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Payload Kg",
+            "type": "number"
+          },
+          "push_force_n": {
+            "default": 0.0,
+            "maximum": 40.0,
+            "minimum": 0.0,
+            "title": "Push Force N",
+            "type": "number"
+          },
+          "push_time_s": {
+            "default": 2.0,
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Push Time S",
+            "type": "number"
+          },
+          "seed": {
+            "default": 0,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "sensor_noise_rad": {
+            "default": 0.0,
+            "maximum": 0.02,
+            "minimum": 0.0,
+            "title": "Sensor Noise Rad",
+            "type": "number"
+          },
+          "speed_scale": {
+            "default": 1.0,
+            "maximum": 2.0,
+            "minimum": 0.5,
+            "title": "Speed Scale",
+            "type": "number"
+          },
+          "torque_limit_scale": {
+            "default": 1.0,
+            "maximum": 1.0,
+            "minimum": 0.5,
+            "title": "Torque Limit Scale",
+            "type": "number"
+          }
+        },
+        "title": "ScenarioParams",
         "type": "object"
       },
       "UniqueFailureKindsSummary": {
@@ -817,6 +1021,16 @@
               }
             },
             "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
         "summary": "Campaign State"
