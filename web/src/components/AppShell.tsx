@@ -24,6 +24,11 @@ export function AppShell() {
     attempt: number;
     result: DataResult<Replay>;
   } | null>(null);
+  const [nominalResponse, setNominalResponse] = useState<{
+    campaignId: string;
+    attempt: number;
+    result: DataResult<Replay>;
+  } | null>(null);
   const [health, setHealth] = useState("checking");
   const [retryCount, setRetryCount] = useState(0);
 
@@ -109,10 +114,30 @@ export function AppShell() {
     };
   }, [campaignId, selectedEpisode, retryCount]);
 
+  useEffect(() => {
+    if (!campaignId) return;
+    let active = true;
+    void dataClient.getTrajectory(campaignId, "nominal").then((result) => {
+      if (!active) return;
+      const validation = result.kind === "ok" ? validateReplay(result.data) : null;
+      const nominalResult = validation && !validation.ok
+        ? { kind: "error" as const, message: validation.error }
+        : result;
+      setNominalResponse({ campaignId, attempt: retryCount, result: nominalResult });
+    });
+    return () => {
+      active = false;
+    };
+  }, [campaignId, retryCount]);
+
   const replay = replayResponse?.campaignId === campaignId &&
     replayResponse.episodeId === selectedEpisode?.episode_id &&
     replayResponse.attempt === retryCount
     ? replayResponse.result
+    : null;
+  const nominal = nominalResponse?.campaignId === campaignId && nominalResponse.attempt === retryCount &&
+    nominalResponse.result.kind === "ok"
+    ? nominalResponse.result.data
     : null;
 
   const retry = () => setRetryCount((value) => value + 1);
@@ -196,6 +221,8 @@ export function AppShell() {
               <ReplayView
                 campaign={campaign}
                 replay={replay}
+                nominal={nominal}
+                initialTime={useUrlStore.getState().t}
                 loading={loadingCampaign || (selectedEpisode !== null && replay === null)}
                 error={campaignError}
                 onRetry={retry}

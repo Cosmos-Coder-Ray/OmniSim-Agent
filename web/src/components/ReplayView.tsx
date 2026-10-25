@@ -1,14 +1,28 @@
+import { lazy, Suspense, useMemo, useRef } from "react";
 import type { CampaignView, DataResult, Replay } from "../api/types";
+import { jointLabel } from "../replay/geometry";
+import type { ReplayCanvasHandle } from "./ReplayCanvas";
+
+const ReplayCanvas = lazy(() => import("./ReplayCanvas").then((module) => ({ default: module.ReplayCanvas })));
 
 interface ReplayViewProps {
   campaign: CampaignView | null;
   replay: DataResult<Replay> | null;
+  nominal: Replay | null;
+  initialTime: number;
   loading: boolean;
   error: string | null;
   onRetry: () => void;
 }
 
-export function ReplayView({ campaign, replay, loading, error, onRetry }: ReplayViewProps) {
+export function ReplayView({ campaign, replay, nominal, initialTime, loading, error, onRetry }: ReplayViewProps) {
+  const canvas = useRef<ReplayCanvasHandle>(null);
+  const event = useMemo(
+    () => replay?.kind === "ok"
+      ? [...replay.data.events].sort((a, b) => b.severity - a.severity)[0]
+      : undefined,
+    [replay],
+  );
   if (loading) {
     return <section className="state-panel" aria-live="polite">Loading replay…</section>;
   }
@@ -48,14 +62,14 @@ export function ReplayView({ campaign, replay, loading, error, onRetry }: Replay
           <div className="section-kicker">EPISODE REPLAY</div>
           <h2>{replay.data.episode_id}</h2>
         </div>
-        <span className="status-pill status-failing">FAILING: torque saturation</span>
+        {event && <span className="status-pill status-failing">FAILING: {event.kind.replaceAll("_", " ")}</span>}
       </div>
-      <div className="canvas-placeholder" aria-label="Panda replay canvas">
-        <span>Panda scene is loading in the next build step.</span>
-      </div>
+      <Suspense fallback={<div className="canvas-frame canvas-loading" aria-live="polite">Loading 3D scene…</div>}>
+        <ReplayCanvas ref={canvas} replay={replay.data} nominal={nominal} initialTime={initialTime} />
+      </Suspense>
       <div className="replay-placeholder-footer">
         <span>{replay.data.frames.length} frames</span>
-        <span>{replay.data.fps} fps source data</span>
+        <span>{jointLabel(event?.joint ?? null)} · source sample {replay.data.fps} Hz</span>
       </div>
     </section>
   );

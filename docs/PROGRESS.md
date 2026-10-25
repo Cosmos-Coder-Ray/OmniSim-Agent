@@ -63,7 +63,7 @@
 
 ## Phase 10A: replay web shell
 
-- Implemented: scaffold, pinned toolchain, generated API type aliases, mock/API data client, responsive shell, URL state, replay geometry utilities, replay validation, and deterministic mock replay fixtures.
-- Verified: group 1 `make web-check` and `make check` passed; group 2 checks are in progress.
-- Next: render and control the replay, then add browser acceptance and screenshot coverage.
+- Implemented: scaffold, pinned toolchain, generated API type aliases, mock/API data client, responsive shell, URL state, replay validation, deterministic mock fixtures, and a demand-rendered Panda scene with nominal reference, torque heat mapping, and joint readout.
+- Verified: groups 1–3 `make check` and `make web-check` passed. The Python suite reports 314 passed and 5 slow tests deselected; Vitest reports 26 passed. The scene is lazy-loaded; Vite still reports the Three.js scene chunk above 500 kB.
+- Next: add playback, seek, event timeline, and charts, then browser acceptance and screenshot coverage.
 - Blockers: Playwright has not run; no browser performance measurement has been made.
