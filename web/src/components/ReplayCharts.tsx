@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import {
   CartesianGrid,
   Line,
@@ -87,4 +88,3 @@ export function ReplayCharts({ replay, torqueCursorRef, velocityCursorRef }: Rep
     </div>
   );
 }
-import type { RefObject } from "react";

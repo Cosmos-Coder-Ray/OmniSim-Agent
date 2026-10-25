@@ -63,7 +63,7 @@
 
 ## Phase 10A: replay web shell
 
-- Implemented: scaffold, pinned toolchain, generated API type aliases, mock/API data client, responsive shell, URL state, replay validation, deterministic mock fixtures, demand-rendered Panda scene with nominal reference and torque heat mapping, playback, seeking, event timeline, and joint telemetry charts.
-- Verified: groups 1–4 `make check` and `make web-check` passed. The latest Python suite reports 314 passed and 5 slow tests deselected; Vitest reports 30 passed. Playback time is debounced to the URL after pause or seek. The scene and charts are lazy-loaded; the Three.js vendor chunk remains above Vite's 500 kB advisory threshold.
-- Next: browser acceptance and screenshot coverage.
-- Blockers: Playwright has not run; no browser performance measurement has been made.
+- Implemented: pinned React/Three toolchain, generated API types, mock/API client, responsive shell, URL state, replay validation, deterministic articulated mock replays, demand-rendered Panda scene, playback, seeking, event timeline, joint charts, Playwright acceptance and screenshot projects, and web CI job.
+- Verified: final `make check` passed with 314 tests and 5 slow tests deselected; final `make web-check` passed with 30 Vitest tests and 4 Playwright tests. `make web-screenshot` passed and generated the paused 1440×900 `docs/img/replay.png`. Frozen strict pnpm install completed with no peer warnings. Playwright ran on Windows against installed Google Chrome using software SwiftShader.
+- Next: merge the completed frontend branch.
+- Blockers: CI runs typecheck, lint, unit tests, generated-type drift, and build; Playwright remains local because software WebGL can vary. The Three.js vendor chunk is 733.61 kB before gzip and triggers Vite's advisory. FPS was not measured.

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { dataClient, dataMode } from "../api/client";
 import type { CampaignView, DataResult, Replay } from "../api/types";
 import { validateReplay } from "../replay/validation";
-import { DEFAULT_CAMPAIGN, tabs, useUrlStore } from "../state/urlStore";
+import { tabs, useUrlStore } from "../state/urlStore";
 import { PlaceholderTab } from "./PlaceholderTab";
 import { ReplayView } from "./ReplayView";
 
@@ -44,8 +44,9 @@ export function AppShell() {
       if (!active) return;
       if (result.kind === "ok") {
         setHealth(result.data.status.toUpperCase());
-        if (dataMode === "api" && campaignId === DEFAULT_CAMPAIGN) {
-          setCampaign(result.data.recorded_runs[0] ?? "");
+        if (dataMode === "api" && campaignId === "") {
+          const firstRun = result.data.recorded_runs[0];
+          if (firstRun) setCampaign(firstRun);
         }
       } else {
         setHealth(result.kind === "unavailable" ? "MOCK MODE" : "UNAVAILABLE");
@@ -81,7 +82,11 @@ export function AppShell() {
   const campaignResult = campaignResponse?.campaignId === campaignId ? campaignResponse.result : null;
   const campaign = campaignResult?.kind === "ok" ? campaignResult.data : null;
   const loadingCampaign = campaignId !== "" && campaignResult === null;
-  const campaignPending = campaignResult?.kind === "pending" ? campaignResult.stage : null;
+  const campaignPending = campaignResult?.kind === "pending"
+    ? campaignResult.stage
+    : campaign?.episodes === null
+      ? campaign.stage ?? "Replay data is not available yet."
+      : null;
   const campaignError = campaignResult?.kind === "error" ? campaignResult.message : null;
 
   const selectedEpisode = useMemo(

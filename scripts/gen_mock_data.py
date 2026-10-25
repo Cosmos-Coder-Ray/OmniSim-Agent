@@ -103,10 +103,10 @@ def mock_link_positions(
 ) -> list[tuple[float, float, float]]:
     links = [(0.0, 0.0, 0.04)]
     for index, length in enumerate(MOCK_SEGMENT_LENGTHS_M):
-        yaw = 0.32 * np.sin(phase * 0.7 + index * 0.43 + phase_offset) + jitter[index + 1, 1]
+        yaw = 0.55 * np.sin(phase * 0.65 + index * 0.8 + phase_offset) + jitter[index + 1, 1]
         pitch = (
-            0.55
-            + 0.3 * np.cos(phase + index * 0.41 + phase_offset)
+            0.35
+            + 0.55 * np.cos(phase * 0.45 + index * 0.85 + phase_offset)
             + jitter[index + 1, 0]
             + jitter[index + 1, 2]
         )

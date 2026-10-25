@@ -85,7 +85,7 @@ export const ReplayCanvas = forwardRef<ReplayCanvasHandle, ReplayCanvasProps>(
           </div>
           <div className="joint-readout">
             <div className="section-kicker">SELECTED JOINT</div>
-            <span ref={readout} aria-live="polite">Select a link</span>
+            <span ref={readout} aria-live="polite" data-testid="joint-readout">Select a link</span>
           </div>
           {nominal && <span className="ghost-key"><i /> Nominal reference</span>}
         </aside>

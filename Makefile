@@ -1,4 +1,4 @@
-.PHONY: setup check test-slow sim-smoke api web web-setup web-check
+.PHONY: setup check test-slow sim-smoke api web web-setup web-check web-e2e web-screenshot
 
 setup:
 	uv sync
@@ -27,3 +27,12 @@ web-setup:
 
 web-check:
 	pnpm --dir web check
+	pnpm --dir web exec playwright test --project=acceptance
+
+web-e2e:
+	pnpm --dir web build
+	pnpm --dir web exec playwright test --project=acceptance
+
+web-screenshot:
+	pnpm --dir web build
+	pnpm --dir web exec playwright test --project=screenshot

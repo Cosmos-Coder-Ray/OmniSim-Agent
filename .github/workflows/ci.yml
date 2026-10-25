@@ -25,3 +25,21 @@ jobs:
       - run: make test-slow
       - run: uv run python scripts/gen_mock_data.py
       - run: git diff --exit-code web/public/mock
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: web/.nvmrc
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm --dir web install --frozen-lockfile --strict-peer-dependencies
+      - run: pnpm --dir web typecheck
+      - run: pnpm --dir web lint
+      - run: pnpm --dir web test:unit
+      - run: pnpm --dir web check:generated-types
+      - run: pnpm --dir web build
