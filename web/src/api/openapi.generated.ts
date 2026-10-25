@@ -1,0 +1,897 @@
+export interface paths {
+    "/api/benchmark": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Benchmark */
+        get: operations["getBenchmark"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/campaigns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Campaign */
+        post: operations["createCampaign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/campaigns/{campaign_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Campaign State */
+        get: operations["getCampaignState"];
+        put?: never;
+        post?: never;
+        /** Cancel Campaign */
+        delete: operations["cancelCampaign"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/campaigns/{campaign_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Campaign Events */
+        get: operations["streamCampaignEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/campaigns/{campaign_id}/trajectories/{trajectory_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Campaign Trajectory */
+        get: operations["getCampaignTrajectory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/exports/{campaign_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Campaign Exports */
+        get: operations["listCampaignExports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/exports/{campaign_id}/{artifact_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Campaign Export */
+        get: operations["getCampaignExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Health */
+        get: operations["getHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
+export type webhooks = Record<string, never>;
+export interface components {
+    schemas: {
+        /** ApiError */
+        ApiError: {
+            /** Error */
+            error: string;
+            /** Message */
+            message: string;
+            /** Replay */
+            replay?: string | null;
+        };
+        /** BenchmarkResult */
+        BenchmarkResult: {
+            /** Budget */
+            budget: number;
+            /** Seed Count */
+            seed_count: number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "live" | "recorded" | "mock";
+            /** Strategies */
+            strategies: components["schemas"]["BenchmarkStrategy"][];
+        };
+        /** BenchmarkStrategy */
+        BenchmarkStrategy: {
+            best_risk: components["schemas"]["MeanStd"];
+            /** Cumulative Failures */
+            cumulative_failures: number[];
+            sims_to_first_failure: components["schemas"]["FirstFailureSummary"];
+            /**
+             * Strategy
+             * @enum {string}
+             */
+            strategy: "nemotron" | "random" | "cmaes";
+            unique_failure_kinds: components["schemas"]["UniqueFailureKindsSummary"];
+        };
+        /** CampaignAccepted */
+        CampaignAccepted: {
+            /** Budget */
+            budget: number;
+            /** Campaign Id */
+            campaign_id: string;
+            /** Profile */
+            profile: string;
+            /** Queue Position */
+            queue_position?: number | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "live" | "recorded";
+            /** Stages */
+            stages: components["schemas"]["CampaignStage"][];
+            /** Status */
+            status: string;
+        };
+        /** CampaignCancellation */
+        CampaignCancellation: {
+            /** Campaign Id */
+            campaign_id: string;
+            /**
+             * Status
+             * @default cancelling
+             * @constant
+             */
+            status: "cancelling";
+        };
+        /** CampaignProgress */
+        CampaignProgress: {
+            /**
+             * Clusters
+             * @default 0
+             */
+            clusters: number;
+            /**
+             * Last Event Id
+             * @default 0
+             */
+            last_event_id: number;
+            /**
+             * Sims Used
+             * @default 0
+             */
+            sims_used: number;
+        };
+        /** CampaignRequest */
+        CampaignRequest: {
+            /** Budget */
+            budget?: number | null;
+            /**
+             * Quick
+             * @default false
+             */
+            quick: boolean;
+            /**
+             * Robot
+             * @default franka_panda
+             * @constant
+             */
+            robot: "franka_panda";
+            /**
+             * Seed
+             * @default 17
+             */
+            seed: number;
+            /**
+             * Strategy
+             * @default nemotron
+             * @enum {string}
+             */
+            strategy: "nemotron" | "random" | "cmaes";
+            /**
+             * Verify
+             * @default false
+             */
+            verify: boolean;
+        };
+        /**
+         * CampaignStage
+         * @enum {string}
+         */
+        CampaignStage: "search" | "shrink" | "spec" | "diagnosis" | "mitigation" | "verification" | "exports" | "done";
+        /** CampaignState */
+        CampaignState: {
+            /** Campaign Id */
+            campaign_id: string;
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+            /** Created At */
+            created_at?: string | null;
+            /** Episodes */
+            episodes?: components["schemas"]["EpisodeResult"][] | null;
+            /** Finished At */
+            finished_at?: string | null;
+            progress: components["schemas"]["CampaignProgress"];
+            /** Queue Position */
+            queue_position?: number | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "live" | "recorded";
+            stage?: components["schemas"]["CampaignStage"] | null;
+            /** Stages */
+            stages: components["schemas"]["CampaignStage"][];
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status: string;
+        };
+        /** EpisodeResult */
+        EpisodeResult: {
+            /** Episode Id */
+            episode_id: string;
+            /** Failures */
+            failures: components["schemas"]["FailureEvent"][];
+            /** Final Ee Error M */
+            final_ee_error_m: number;
+            /** Max Tau Ratio */
+            max_tau_ratio: number;
+            /** Max Vel Ratio */
+            max_vel_ratio: number;
+            /** Min Manipulability */
+            min_manipulability: number;
+            params: components["schemas"]["ScenarioParams"];
+            /** Risk */
+            risk: number;
+            /** Trajectory Path */
+            trajectory_path?: string | null;
+        };
+        /** ExportsResponse */
+        ExportsResponse: {
+            /** Artifacts */
+            artifacts: string[];
+            /** Campaign Id */
+            campaign_id: string;
+            /** Status */
+            status: string;
+        };
+        /** FailureEvent */
+        FailureEvent: {
+            /** Detail */
+            detail?: {
+                [key: string]: unknown;
+            };
+            /** Joint */
+            joint?: number | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "torque_saturation" | "joint_limit" | "velocity_limit" | "tracking_error" | "singularity" | "collision" | "instability";
+            /** Severity */
+            severity: number;
+            /** T */
+            t: number;
+        };
+        /** FirstFailureSummary */
+        FirstFailureSummary: {
+            /** Mean */
+            mean: number;
+            /** Mean Is Lower Bound */
+            mean_is_lower_bound: boolean;
+            /** Per Seed */
+            per_seed: (number | null)[];
+            /** Seeds With Failure */
+            seeds_with_failure: number;
+            /** Std */
+            std: number;
+        };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HealthResponse */
+        HealthResponse: {
+            /** Demo Mode */
+            demo_mode: boolean;
+            /** Demo Ready */
+            demo_ready: boolean;
+            /** Knowledge Usage */
+            knowledge_usage: {
+                [key: string]: number | string;
+            };
+            /** Model Resolution */
+            model_resolution: {
+                [key: string]: string | null;
+            } | null;
+            /** Queue */
+            queue: {
+                [key: string]: number;
+            };
+            /** Recorded Runs */
+            recorded_runs: string[];
+            /**
+             * Status
+             * @default ok
+             * @constant
+             */
+            status: "ok";
+            /** Token Usage */
+            token_usage: {
+                [key: string]: unknown;
+            };
+        };
+        /** MeanStd */
+        MeanStd: {
+            /** Mean */
+            mean: number;
+            /** Std */
+            std: number;
+        };
+        /** ScenarioParams */
+        ScenarioParams: {
+            /**
+             * Joint Damping
+             * @default 0
+             */
+            joint_damping: number;
+            /**
+             * Kp Scale
+             * @default 1
+             */
+            kp_scale: number;
+            /**
+             * Latency Ticks
+             * @default 0
+             */
+            latency_ticks: number;
+            /**
+             * Link Mass Scale
+             * @default 1
+             */
+            link_mass_scale: number;
+            /**
+             * Payload Kg
+             * @default 0
+             */
+            payload_kg: number;
+            /**
+             * Push Force N
+             * @default 0
+             */
+            push_force_n: number;
+            /**
+             * Push Time S
+             * @default 2
+             */
+            push_time_s: number;
+            /**
+             * Seed
+             * @default 0
+             */
+            seed: number;
+            /**
+             * Sensor Noise Rad
+             * @default 0
+             */
+            sensor_noise_rad: number;
+            /**
+             * Speed Scale
+             * @default 1
+             */
+            speed_scale: number;
+            /**
+             * Torque Limit Scale
+             * @default 1
+             */
+            torque_limit_scale: number;
+        };
+        /** UniqueFailureKindsSummary */
+        UniqueFailureKindsSummary: {
+            /** Kinds */
+            kinds: ("torque_saturation" | "joint_limit" | "velocity_limit" | "tracking_error" | "singularity" | "collision" | "instability")[];
+            /** Mean */
+            mean: number;
+            /** Std */
+            std: number;
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
+    };
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
+}
+export type $defs = Record<string, never>;
+export interface operations {
+    getBenchmark: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BenchmarkResult"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    createCampaign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CampaignRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignAccepted"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    getCampaignState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignState"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    cancelCampaign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignCancellation"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    streamCampaignEvents: {
+        parameters: {
+            query?: {
+                after?: number | null;
+                pace_ms?: number;
+            };
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getCampaignTrajectory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                campaign_id: string;
+                trajectory_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listCampaignExports: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportsResponse"];
+                };
+            };
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getCampaignExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                campaign_id: string;
+                artifact_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+}
