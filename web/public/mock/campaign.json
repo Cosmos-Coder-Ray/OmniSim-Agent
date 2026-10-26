@@ -210,7 +210,8 @@
         "ok": true,
         "robot": "Franka Emika Panda",
         "mismatch_count": 0,
-        "error": null
+        "error": null,
+        "spec_origin": "built"
       }
     },
     {

@@ -1,4 +1,4 @@
-.PHONY: setup check test-slow sim-smoke api web
+.PHONY: setup check test-slow sim-smoke api web web-setup web-check web-e2e web-screenshot
 
 setup:
 	uv sync
@@ -21,3 +21,18 @@ api:
 
 web:
 	pnpm --dir web dev -- --host 0.0.0.0 --port 5173
+
+web-setup:
+	pnpm --dir web install --frozen-lockfile --strict-peer-dependencies
+
+web-check:
+	pnpm --dir web check
+	pnpm --dir web exec playwright test --project=acceptance
+
+web-e2e:
+	pnpm --dir web build
+	pnpm --dir web exec playwright test --project=acceptance
+
+web-screenshot:
+	pnpm --dir web build
+	pnpm --dir web exec playwright test --project=screenshot

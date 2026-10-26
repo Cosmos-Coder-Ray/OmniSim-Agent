@@ -60,3 +60,10 @@
 - Verified for the episode contract: `make check` passed with 310 tests and 5 slow tests deselected; `uv run python scripts/export_openapi.py --check` reported the export current. Both commands emitted the existing optional `cma` matplotlib warning.
 - Next: replace the UNMEASURED token admission estimates after live runs with about 1.3 times measured per-run usage.
 - Blockers: no live Nebius or Tavily call was made, and quick-mode time was not measured. The token estimates are conservative admission checks, not guarantees.
+
+## Phase 10A: replay web shell
+
+- Implemented: pinned React/Three toolchain, generated API types, mock/API client, responsive shell, URL state, replay validation, deterministic articulated mock replays, demand-rendered Panda scene, playback, seeking, event timeline, joint charts, Playwright acceptance and screenshot projects, and web CI job.
+- Verified: final `make check` passed with 314 tests and 5 slow tests deselected; final `make web-check` passed with 30 Vitest tests and 4 Playwright tests. `make web-screenshot` passed and generated the paused 1440×900 `docs/img/replay.png`. Frozen strict pnpm install completed with no peer warnings. Playwright ran on Windows against installed Google Chrome using software SwiftShader.
+- Next: merge the completed frontend branch.
+- Blockers: CI runs typecheck, lint, unit tests, generated-type drift, and build; Playwright remains local because software WebGL can vary. The Three.js vendor chunk is 733.61 kB before gzip and triggers Vite's advisory. FPS was not measured.
