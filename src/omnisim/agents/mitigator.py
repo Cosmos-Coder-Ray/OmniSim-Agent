@@ -16,7 +16,7 @@ from omnisim.core.shrinker import ShrinkResult
 from omnisim.core.verify import VerificationResult
 from omnisim.knowledge.verifier import verified_only
 from omnisim.llm import nebius
-from omnisim.llm.budget import BudgetExceeded, LLMError, Usage
+from omnisim.llm.budget import BudgetExceeded, Usage
 from omnisim.schemas import DiagnosisReport, EpisodeResult, Evidence, HardwareSpec, SafeEnvelope
 from omnisim.sim.constants import TICK_MS
 from omnisim.sim.detectors import DetectorConfig
@@ -337,18 +337,18 @@ def mitigate(
 
         try:
             llm_values, evidence, advisories = ask(user)
-        except BudgetExceeded as error:
+        except BudgetExceeded:
             fallback = True
-            fallback_reason = f"mitigation token budget exhausted: {error}"
-        except (LLMError, ValueError) as error:
+            fallback_reason = "mitigation token budget exhausted"
+        except Exception as error:
             try:
                 llm_values, evidence, advisories = ask(
                     f"{user}\n\nRepair the previous JSON. Validation error: {error}"
                 )
-            except BudgetExceeded as repair_error:
+            except BudgetExceeded:
                 fallback = True
-                fallback_reason = f"mitigation token budget exhausted: {repair_error}"
-            except (LLMError, ValueError) as repair_error:
+                fallback_reason = "mitigation token budget exhausted"
+            except Exception as repair_error:
                 fallback = True
                 fallback_reason = f"mitigation draft failed: {type(repair_error).__name__}"
     else:

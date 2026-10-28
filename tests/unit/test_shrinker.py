@@ -136,3 +136,23 @@ def test_global_cluster_does_not_match_joint_specific_event() -> None:
 
     assert result.minimal.payload_kg == original.payload_kg
     assert result.trace == [("payload_kg", 0.0, False)]
+
+
+def test_infrastructure_error_stops_shrink_at_last_persisting_parameters() -> None:
+    original = ScenarioParams(payload_kg=3.0, latency_ticks=12, seed=42)
+    calls = 0
+
+    def evaluate(params: ScenarioParams) -> EpisodeResult:
+        nonlocal calls
+        calls += 1
+        if params.payload_kg == 0.0:
+            raise OSError("simulator unavailable")
+        return _result(params, True)
+
+    result = shrink(original, _KEY, evaluate)
+
+    assert result.minimal.latency_ticks == ScenarioParams().latency_ticks
+    assert result.minimal.payload_kg == original.payload_kg
+    assert result.sims_used == calls == 2
+    assert result.trace == [("latency_ticks", 0, True)]
+    assert result.converged is False

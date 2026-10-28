@@ -67,3 +67,10 @@
 - Verified: final `make check` passed with 314 tests and 5 slow tests deselected; final `make web-check` passed with 30 Vitest tests and 4 Playwright tests. `make web-screenshot` passed and generated the paused 1440×900 `docs/img/replay.png`. Frozen strict pnpm install completed with no peer warnings. Playwright ran on Windows against installed Google Chrome using software SwiftShader.
 - Next: merge the completed frontend branch.
 - Blockers: CI runs typecheck, lint, unit tests, generated-type drift, and build; Playwright remains local because software WebGL can vary. The Three.js vendor chunk is 733.61 kB before gzip and triggers Vite's advisory. FPS was not measured.
+
+## Phase 10B: hardening
+
+- Implemented: shared provider retries and circuit breakers; hostname metadata; caller fallback policies; worker-crash recovery; shrink infrastructure handling; interrupted-job SSE behavior.
+- Verified: Group 1 `make check` passed with 330 tests and 5 slow tests deselected. Group 2 focused tests passed (114); `make check` passed with 355 tests and 5 slow tests deselected.
+- Next: complete structured audit logging, health and campaign artifact routes, verification showcases, and end-to-end coverage.
+- Blockers: no live Nebius or Tavily calls were made.

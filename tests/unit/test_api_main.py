@@ -141,6 +141,20 @@ def test_startup_reconciles_terminal_stage_and_interrupted_job(tmp_path: Path) -
     assert stale.json()["stage"] == "diagnosis"
 
 
+def test_event_stream_ends_for_interrupted_job(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    app = app_for(tmp_path, runner=runner)
+    with TestClient(app) as client:
+        accepted = client.post("/api/campaigns", json={"quick": True})
+        campaign_id = accepted.json()["campaign_id"]
+        app.state.store.set_status(campaign_id, "interrupted")
+
+        response = client.get(f"/api/campaigns/{campaign_id}/events")
+
+    assert response.status_code == 200
+    assert 'event: stream_end\ndata: {"status":"interrupted"}' in response.text
+
+
 def test_health_returns_cached_state_without_waiting_for_model_resolution(
     tmp_path: Path, monkeypatch
 ) -> None:

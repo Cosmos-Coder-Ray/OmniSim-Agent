@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -19,6 +20,24 @@ class SlowShield:
 class BlockingShield:
     def decide(self, params: ScenarioParams) -> ShieldDecision:
         return ShieldDecision(params, True, ("payload exceeds envelope limit",))
+
+
+def _crash_first_worker(
+    params, limits, shield, episode_id, run_dir, cfg, timeout_s
+) -> EpisodeResult:
+    del limits, shield, run_dir, cfg, timeout_s
+    if episode_id == "ep_000":
+        os._exit(7)
+    return EpisodeResult(
+        episode_id=episode_id,
+        params=params,
+        failures=[],
+        risk=0.0,
+        max_tau_ratio=0.0,
+        max_vel_ratio=0.0,
+        final_ee_error_m=0.0,
+        min_manipulability=0.0,
+    )
 
 
 def test_run_episode_without_run_dir_does_not_write_a_replay(
@@ -171,8 +190,8 @@ def test_run_batch_keeps_successes_and_worker_errors_in_order(
             callback: Callable[[EpisodeResult | EpisodeError], None],
             error_callback: Callable[[BaseException], None],
         ) -> None:
-            params = cast(ScenarioParams, args[0])
-            episode_id = cast(str, args[3])
+            params = cast(ScenarioParams, args[1])
+            episode_id = cast(str, args[4])
             if episode_id == "ep_001":
                 error_callback(RuntimeError("worker failed"))
                 return
@@ -199,7 +218,14 @@ def test_run_batch_keeps_successes_and_worker_errors_in_order(
             pass
 
     class FakeContext:
-        def Pool(self, *, processes: int, initializer: object) -> FakePool:
+        def SimpleQueue(self):
+            from queue import SimpleQueue
+
+            return SimpleQueue()
+
+        def Pool(
+            self, *, processes: int, initializer: object, initargs: tuple[object, ...]
+        ) -> FakePool:
             return FakePool(processes, initializer)
 
     monkeypatch.setattr(runner_module.mp, "get_context", lambda method: FakeContext())
@@ -234,10 +260,10 @@ def test_run_batch_rebuilds_pool_after_parent_timeout(
         ) -> None:
             if not self.completes:
                 return
-            params = cast(ScenarioParams, args[0])
+            params = cast(ScenarioParams, args[1])
             callback(
                 EpisodeResult(
-                    episode_id=cast(str, args[3]),
+                    episode_id=cast(str, args[4]),
                     params=params,
                     failures=[],
                     risk=0.0,
@@ -260,9 +286,17 @@ def test_run_batch_rebuilds_pool_after_parent_timeout(
     pools: list[FakePool] = []
 
     class FakeContext:
-        def Pool(self, *, processes: int, initializer: object) -> FakePool:
+        def SimpleQueue(self):
+            from queue import SimpleQueue
+
+            return SimpleQueue()
+
+        def Pool(
+            self, *, processes: int, initializer: object, initargs: tuple[object, ...]
+        ) -> FakePool:
             assert processes == 2
             assert callable(initializer)
+            assert len(initargs) == 1
             pool = FakePool(completes=bool(pools))
             pools.append(pool)
             return pool
@@ -279,3 +313,18 @@ def test_run_batch_rebuilds_pool_after_parent_timeout(
     assert isinstance(timed_out[0], EpisodeError)
     assert timed_out[0].error_type == "WorkerTimeout"
     assert isinstance(recovered[0], EpisodeResult)
+
+
+def test_run_batch_marks_crashed_worker_and_continues(
+    urdf_limits: UrdfLimits,
+) -> None:
+    params = [ScenarioParams(seed=seed) for seed in range(3)]
+
+    with EpisodeRunner(worker_fn=_crash_first_worker) as runner:
+        results = runner.run_batch(params, urdf_limits, workers=2, timeout_s=10)
+
+    assert [result.episode_id for result in results] == ["ep_000", "ep_001", "ep_002"]
+    assert isinstance(results[0], EpisodeError)
+    assert results[0].error_type == "worker_crashed"
+    assert isinstance(results[1], EpisodeResult)
+    assert isinstance(results[2], EpisodeResult)

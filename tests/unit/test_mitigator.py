@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from pydantic import ValidationError
 
 from omnisim.agents.mitigator import (
@@ -10,7 +11,8 @@ from omnisim.agents.mitigator import (
     mitigate,
 )
 from omnisim.core.shrinker import ShrinkResult
-from omnisim.llm.budget import LLMError, Usage
+from omnisim.llm.budget import BudgetExceeded, LLMError, LLMUnavailable, Usage
+from omnisim.llm.nebius import LLMOutputError
 from omnisim.schemas import DiagnosisReport, Evidence, HardwareSpec
 from omnisim.sim.detectors import DetectorConfig
 from omnisim.sim.limits import UrdfLimits
@@ -222,6 +224,41 @@ def test_mitigator_falls_back_when_chat_fails() -> None:
 
     assert envelope.verification["mitigator_fallback"] is True
     assert envelope.limits["max_payload_kg"] == 2.7
+
+
+@pytest.mark.parametrize("failure", ["budget", "unavailable", "output", "unexpected"])
+def test_mitigator_marks_deterministic_fallback_for_llm_failures(failure: str) -> None:
+    calls = 0
+
+    def fail(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if failure == "budget":
+            raise BudgetExceeded("cap")
+        if failure == "unavailable":
+            raise LLMUnavailable("offline")
+        if failure == "output":
+            raise LLMOutputError("invalid output", ValueError("bad json"))
+        raise RuntimeError("provider failed")
+
+    envelope = mitigate(
+        robot="franka_panda",
+        spec=_spec(),
+        diagnoses={},
+        shrinks={},
+        facts_by_cluster=_facts(),
+        limits=_limits(),
+        chat_json=fail,
+        predictor=_predictor,
+    )
+
+    assert envelope.verification["mitigator_fallback"] is True
+    assert envelope.verification["fallback_reason"] == (
+        "mitigation token budget exhausted"
+        if failure == "budget"
+        else f"mitigation draft failed: {'LLMUnavailable' if failure == 'unavailable' else 'LLMOutputError' if failure == 'output' else 'RuntimeError'}"
+    )
+    assert calls == (1 if failure == "budget" else 2)
 
 
 def test_envelope_draft_rejects_code_owned_fields() -> None:

@@ -25,6 +25,7 @@ from omnisim.knowledge.cache import CACHE_DIR, cache_file, read_cache, write_cac
 from omnisim.knowledge.errors import KnowledgeUnavailable
 from omnisim.knowledge.usage import CALL_LOG_PATH, log_call
 from omnisim.knowledge.verifier import normalize_text, verified_only, verify_spec
+from omnisim.llm.budget import BudgetExceeded
 from omnisim.llm.nebius import chat_json
 from omnisim.resilience import (
     CALL_DEADLINE_S,
@@ -658,15 +659,20 @@ def map_failures_to_real_errors(
         "\n".join(f"{kind}: {_FAILURE_MEANINGS[kind]}" for kind in kinds)
         + f"\nVerified evidence candidates:\n{evidence_text}"
     )
-    draft, _ = chat_json(
-        "deep",
-        system,
-        user,
-        MappingsDraft,
-        temperature=0,
-        max_tokens=2048,
-        run_id=run_id,
-    )
+    try:
+        draft, _ = chat_json(
+            "deep",
+            system,
+            user,
+            MappingsDraft,
+            temperature=0,
+            max_tokens=2048,
+            run_id=run_id,
+        )
+    except BudgetExceeded:
+        raise
+    except Exception:
+        return result
     for mapping in draft.items:
         if mapping.kind not in result:
             continue

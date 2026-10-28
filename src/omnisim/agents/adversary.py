@@ -17,7 +17,7 @@ from omnisim.agents.baselines import (
     normalize,
 )
 from omnisim.llm import nebius
-from omnisim.llm.budget import BudgetExceeded, LLMError, Usage
+from omnisim.llm.budget import BudgetExceeded, Usage
 from omnisim.llm.call_log import provider_host
 from omnisim.schemas import ScenarioParams
 
@@ -213,7 +213,7 @@ class NemotronAdversary(Strategy):
                 hypothesis, raw_scenarios = self._request(history, bounds, requested_llm)
             except BudgetExceeded:
                 raise
-            except LLMError:
+            except Exception:
                 hypothesis = "LLM unavailable; using deterministic fallback proposals."
                 self.last_fallback = True
 

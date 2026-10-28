@@ -167,6 +167,7 @@ def campaign_events(
     spec_result = spec
     mismatches: tuple[Mismatch, ...] = ()
     error_mappings: dict[FailureKind, ErrorMapping] = {}
+    mapping_error: str | None = None
     shrinks: dict[str, ShrinkResult] = {}
     diagnoses: dict[str, DiagnosisReport] = {}
     seq = 0
@@ -446,10 +447,10 @@ def campaign_events(
                         "cluster_ids": [cluster.cluster_id for cluster in current.clusters],
                     },
                 )
-        except BudgetExceeded as error:
+        except BudgetExceeded:
             status = "token_cap"
             stop_reason = "token_cap"
-            error_message = str(error)
+            error_message = "token cap reached"
         else:
             if status == "completed":
                 stop_reason = "clusters" if reached_cluster_limit else "budget"
@@ -536,23 +537,31 @@ def campaign_events(
                     spec_result = build_spec_fn(robot, run_id=campaign_id)
                 mismatches_list, not_compared = compare_fn(spec_result, active_limits)
                 mismatches = tuple(mismatches_list)
-                failure_kinds = list(
+                failure_kinds: list[FailureKind] = list(
                     dict.fromkeys(event.kind for episode in episodes for event in episode.failures)
                 )
                 if failure_kinds:
-                    error_mappings = mapping_fn(failure_kinds, spec_result, run_id=campaign_id)
-                _write_json(
-                    run_dir / "spec.json",
-                    {
-                        "spec": spec_result.model_dump(mode="json"),
-                        "mismatches": [item.model_dump(mode="json") for item in mismatches],
-                        "not_compared": [item.model_dump(mode="json") for item in not_compared],
-                        "error_mappings": {
-                            key: value.model_dump(mode="json")
-                            for key, value in error_mappings.items()
-                        },
+                    try:
+                        error_mappings = mapping_fn(failure_kinds, spec_result, run_id=campaign_id)
+                    except BudgetExceeded:
+                        error_mappings = {kind: ErrorMapping(kind=kind) for kind in failure_kinds}
+                        status = "token_cap"
+                        stop_reason = "token_cap"
+                        error_message = "token cap reached"
+                    except Exception as error:
+                        error_mappings = {kind: ErrorMapping(kind=kind) for kind in failure_kinds}
+                        mapping_error = type(error).__name__
+                spec_artifact = {
+                    "spec": spec_result.model_dump(mode="json"),
+                    "mismatches": [item.model_dump(mode="json") for item in mismatches],
+                    "not_compared": [item.model_dump(mode="json") for item in not_compared],
+                    "error_mappings": {
+                        key: value.model_dump(mode="json") for key, value in error_mappings.items()
                     },
-                )
+                }
+                if mapping_error is not None:
+                    spec_artifact["mapping_error"] = mapping_error
+                _write_json(run_dir / "spec.json", spec_artifact)
                 yield emit(
                     "spec_ready",
                     {
@@ -562,17 +571,18 @@ def campaign_events(
                         "spec_origin": "provided" if spec is not None else "built",
                     },
                 )
-        except BudgetExceeded as error:
+        except BudgetExceeded:
             status = "token_cap"
             stop_reason = "token_cap"
-            error_message = str(error)
-            yield emit("spec_ready", {"ok": False, "error": error_message})
+            error_message = "token cap reached"
+            yield emit("spec_ready", {"ok": False, "error": "token cap reached"})
+            _write_json(run_dir / "spec.json", {"spec": None, "error": "BudgetExceeded"})
         except Exception as error:
             status = "error"
             stop_reason = "none"
-            error_message = f"{type(error).__name__}: {error}"
+            error_message = "spec unavailable"
             yield emit("spec_ready", {"ok": False, "error": error_message})
-            _write_json(run_dir / "spec.json", {"spec": None, "error": error_message})
+            _write_json(run_dir / "spec.json", {"spec": None, "error": type(error).__name__})
 
         set_stage("diagnosis")
         if status != "cancelled":
@@ -618,21 +628,25 @@ def campaign_events(
                         chat_json=chat_json,
                         run_id=campaign_id,
                     )
-                except BudgetExceeded as error:
+                except BudgetExceeded:
                     status = "token_cap"
                     stop_reason = "token_cap"
-                    error_message = str(error)
-                    yield emit(
-                        "diagnosis_ready",
-                        {"cluster_id": cluster.cluster_id, "ok": False, "error": error_message},
-                    )
-                except Exception as error:
+                    error_message = "token cap reached"
                     yield emit(
                         "diagnosis_ready",
                         {
                             "cluster_id": cluster.cluster_id,
                             "ok": False,
-                            "error": f"{type(error).__name__}: {error}",
+                            "error": "token cap reached",
+                        },
+                    )
+                except Exception:
+                    yield emit(
+                        "diagnosis_ready",
+                        {
+                            "cluster_id": cluster.cluster_id,
+                            "ok": False,
+                            "error": "diagnosis failed",
                         },
                     )
                 else:
@@ -674,8 +688,8 @@ def campaign_events(
             complete("cancelled", "none")
             finished = True
         raise
-    except BudgetExceeded as error:
-        error_message = str(error)
+    except BudgetExceeded:
+        error_message = "token cap reached"
         persist_auxiliary()
         outcome = complete("token_cap", "token_cap")
         finished = True

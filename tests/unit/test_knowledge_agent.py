@@ -7,7 +7,8 @@ from omnisim.knowledge import compare
 from omnisim.knowledge import tavily_agent as agent
 from omnisim.knowledge.errors import KnowledgeUnavailable
 from omnisim.knowledge.tavily_agent import ErrorsDraft, LimitDraft, LimitsDraft
-from omnisim.llm.budget import LLMUnavailable
+from omnisim.llm.budget import BudgetExceeded, LLMUnavailable
+from omnisim.llm.nebius import LLMOutputError
 from omnisim.resilience import CircuitBreaker
 from omnisim.schemas import Evidence, HardwareSpec
 from omnisim.sim.limits import UrdfLimits
@@ -373,3 +374,50 @@ def test_error_mapping_without_verified_candidates_is_no_match() -> None:
     assert result["collision"].real_error_name is None
     assert result["collision"].evidence is None
     assert result["collision"].confidence is None
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        LLMUnavailable("offline"),
+        LLMOutputError("invalid output", ValueError("bad json")),
+        RuntimeError("provider failed"),
+    ],
+)
+def test_error_mapping_llm_failure_is_explicit_no_match(monkeypatch, error) -> None:
+    evidence = Evidence(
+        claim="Error E17",
+        value="E17",
+        source_url="https://docs.test",
+        quote="Fault code E17 is documented in this manual.",
+        verified=True,
+    )
+    monkeypatch.setattr(
+        agent,
+        "chat_json",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+
+    result = agent.map_failures_to_real_errors(["collision"], _spec(errors=[evidence]))
+
+    assert result["collision"].real_error_name is None
+    assert result["collision"].evidence is None
+    assert result["collision"].confidence is None
+
+
+def test_error_mapping_budget_exhaustion_propagates(monkeypatch) -> None:
+    evidence = Evidence(
+        claim="Error E17",
+        value="E17",
+        source_url="https://docs.test",
+        quote="Fault code E17 is documented in this manual.",
+        verified=True,
+    )
+    monkeypatch.setattr(
+        agent,
+        "chat_json",
+        lambda *args, **kwargs: (_ for _ in ()).throw(BudgetExceeded("cap")),
+    )
+
+    with pytest.raises(BudgetExceeded):
+        agent.map_failures_to_real_errors(["collision"], _spec(errors=[evidence]))

@@ -170,7 +170,7 @@ class ProcessJobRunner:
         elif managed.reason in {"shutdown", "user"}:
             status = "cancelled"
         else:
-            status = "completed" if exitcode == 0 else "error"
+            status = "completed" if exitcode == 0 else "interrupted"
         del self._active[campaign_id]
         process.close()
         self._on_finished(managed.config, JobExit(status, exitcode, managed.forced))
