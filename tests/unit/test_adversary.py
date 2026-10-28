@@ -145,6 +145,20 @@ def test_budget_exceeded_propagates() -> None:
         adversary.propose([], scenario_bounds(), 1)
 
 
+def test_adversary_passes_campaign_id_to_chat_call() -> None:
+    kwargs: dict[str, object] = {}
+
+    def chat_json(*args: object, **options: object) -> tuple[AdversaryResponse, Usage]:
+        kwargs.update(options)
+        return AdversaryResponse(), Usage()
+
+    adversary = NemotronAdversary(seed=3, run_id="campaign-a", chat_json=chat_json)
+
+    adversary._request([], scenario_bounds(), 1)
+
+    assert kwargs["run_id"] == "campaign-a"
+
+
 @pytest.mark.parametrize("k", [1, 2, 4, 5])
 def test_last_origins_matches_each_requested_batch(k: int) -> None:
     adversary = NemotronAdversary(seed=23, llm_fraction=0.0)

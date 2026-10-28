@@ -7,7 +7,7 @@ import openai
 
 from omnisim.config import Settings
 from omnisim.llm.budget import LLMUnavailable
-from omnisim.llm.call_log import write_call_log
+from omnisim.llm.call_log import provider_host, write_call_log
 
 log = logging.getLogger(__name__)
 Role = Literal["fast", "deep", "ultra"]
@@ -25,15 +25,20 @@ def _list_models(client: Any) -> tuple[str, ...]:
         models = tuple(sorted(model.id for model in client.models.list()))
     except openai.OpenAIError as exc:
         status = exc.status_code if isinstance(exc, openai.APIStatusError) else None
+        retryable = isinstance(exc, (openai.APITimeoutError, openai.APIConnectionError)) or (
+            status == 429 or (status is not None and status >= 500)
+        )
         write_call_log(
             {
                 "role": "models",
-                "attempt": 1,
                 "latency_s": perf_counter() - started,
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
                 "ok": False,
                 "error": type(exc).__name__,
+                "provider_host": provider_host(),
+                "status_code": status,
+                "failure_kind": "transport" if retryable else "request",
             }
         )
         log.warning(
@@ -44,11 +49,11 @@ def _list_models(client: Any) -> tuple[str, ...]:
     write_call_log(
         {
             "role": "models",
-            "attempt": 1,
             "latency_s": perf_counter() - started,
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "ok": True,
+            "provider_host": provider_host(),
         }
     )
     return models

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from omnisim.llm import models, nebius
 from omnisim.llm.budget import BudgetExceeded, LLMError, Usage, request_slot
 from omnisim.llm.call_log import write_call_log
+from omnisim.resilience import CircuitBreaker
 
 
 class Answer(BaseModel):
@@ -55,6 +56,7 @@ class FakeClient:
 
 @pytest.fixture
 def setup_chat(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    monkeypatch.setattr(nebius, "_circuit", CircuitBreaker())
     monkeypatch.setenv("NEBIUS_FAST_MODEL", "nvidia/nemotron-test")
     monkeypatch.setattr(nebius, "check", lambda role, **kwargs: None)
     monkeypatch.setattr(nebius, "record", lambda role, prompt, completion, **kwargs: None)
@@ -186,6 +188,61 @@ def test_transport_timeout_retries_once(monkeypatch: pytest.MonkeyPatch, setup_c
     assert len(client.requests) == 2
 
 
+def test_transport_failure_allows_four_attempts(
+    monkeypatch: pytest.MonkeyPatch, setup_chat
+) -> None:
+    timeout = openai.APITimeoutError(
+        request=cast(Any, httpx.Request("POST", "https://test.invalid"))
+    )
+    client = FakeClient([timeout, timeout, timeout, response('{"answer": 7}')])
+    delays: list[float] = []
+    monkeypatch.setattr(nebius, "get_client", lambda: client)
+
+    parsed, _ = nebius.chat_json(
+        "fast",
+        "system prompt",
+        "user prompt",
+        Answer,
+        temperature=0,
+        max_tokens=8,
+        retry_sleep=delays.append,
+        retry_rng=lambda: 0.5,
+    )
+
+    assert parsed.answer == 7
+    assert len(client.requests) == 4
+    assert delays == [0.5, 1.0, 2.0]
+
+
+def test_transport_exhaustion_opens_provider_circuit(
+    monkeypatch: pytest.MonkeyPatch, setup_chat
+) -> None:
+    timeout = openai.APITimeoutError(
+        request=cast(Any, httpx.Request("POST", "https://test.invalid"))
+    )
+    client = FakeClient([timeout] * 12)
+    monkeypatch.setattr(nebius, "get_client", lambda: client)
+
+    for _ in range(3):
+        with pytest.raises(nebius.LLMUnavailable):
+            nebius.chat_json(
+                "fast",
+                "system prompt",
+                "user prompt",
+                Answer,
+                temperature=0,
+                max_tokens=8,
+                retry_sleep=lambda delay: None,
+                retry_rng=lambda: 0,
+            )
+
+    before = len(client.requests)
+    with pytest.raises(nebius.LLMUnavailable, match="circuit open"):
+        run_chat(client)
+
+    assert len(client.requests) == before
+
+
 @pytest.mark.parametrize("status", [400, 401, 403, 404])
 def test_client_errors_do_not_retry(
     monkeypatch: pytest.MonkeyPatch, setup_chat, status: int
@@ -297,6 +354,19 @@ def test_attempt_logs_have_status_and_no_prompt_or_key(
     assert "system prompt" not in text
     assert "user prompt" not in text
     assert "secret" not in text
+
+
+def test_provider_host_is_logged_as_hostname_only(
+    monkeypatch: pytest.MonkeyPatch, setup_chat
+) -> None:
+    monkeypatch.setenv("NEBIUS_BASE_URL", "https://tokenfactory.test.invalid/v1")
+    client = FakeClient([response('{"answer": 7}')])
+    monkeypatch.setattr(nebius, "get_client", lambda: client)
+
+    run_chat(client)
+
+    rows = [json.loads(line) for line in setup_chat.read_text(encoding="utf-8").splitlines()]
+    assert {row["provider_host"] for row in rows} == {"tokenfactory.test.invalid"}
 
 
 def test_client_disables_sdk_retries_and_uses_fixed_timeout(

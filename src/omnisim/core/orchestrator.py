@@ -329,7 +329,9 @@ def campaign_events(
             status = "cancelled"
             stop_reason = "none"
 
-        active_strategy = make_strategy(strategy, seed=seed, budget=budget, chat_json=chat_json)
+        active_strategy = make_strategy(
+            strategy, seed=seed, budget=budget, run_id=campaign_id, chat_json=chat_json
+        )
         reached_cluster_limit = False
 
         def should_stop(history: list[Trial]) -> bool:

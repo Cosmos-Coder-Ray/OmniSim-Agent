@@ -69,6 +69,7 @@ def test_cache_hit_replays_parsed_result_and_usage_without_chat_call(tmp_path: P
     assert set(json.loads(entry_text)) == {
         "parsed",
         "prompt_hash",
+        "provider_host",
         "resolved_model_id",
         "salt",
         "usage",

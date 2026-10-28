@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import UTC, datetime
 
@@ -8,6 +9,9 @@ from omnisim.api.jobs import JobConfig
 from omnisim.api.models import CampaignRequest
 from omnisim.core.campaign_verify import run_campaign_verification
 from omnisim.core.orchestrator import CampaignOutcome, campaign_events
+from omnisim.llm.call_log import provider_host
+
+log = logging.getLogger(__name__)
 
 
 def write_stage(config: JobConfig, stage: str) -> None:
@@ -43,6 +47,10 @@ def _campaign_outcome(stream) -> CampaignOutcome:
 
 
 def run_campaign_job(config: JobConfig) -> None:
+    log.info(
+        "campaign job started",
+        extra={"run_id": config.campaign_id, "provider_host": provider_host()},
+    )
     request = CampaignRequest.model_validate(config.request)
     cancel_path = config.cancel_flag
     try:

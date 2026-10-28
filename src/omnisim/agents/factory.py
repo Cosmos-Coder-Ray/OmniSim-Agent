@@ -11,6 +11,7 @@ def make_strategy(
     seed: int,
     llm_fraction: float = 1.0,
     budget: int | None = None,
+    run_id: str | None = None,
     chat_json: ChatJSON | None = None,
 ) -> Strategy:
     strategy_seed = seed % (2**32)
@@ -19,6 +20,7 @@ def make_strategy(
             seed=strategy_seed,
             llm_fraction=llm_fraction,
             total_budget=budget,
+            run_id=run_id,
             chat_json=chat_json,
         )
     if name == "random":

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from omnisim.llm import models, nebius
 from omnisim.llm.budget import Usage
+from omnisim.llm.call_log import provider_host
 from omnisim.llm.models import Role
 
 log = logging.getLogger(__name__)
@@ -97,6 +98,7 @@ class BenchmarkLLMCache:
         self._chat_json = chat_json or nebius.chat_json
         self._model_resolver = model_resolver or _resolve_model
         self.last_model_id: str | None = None
+        self.last_provider_host: str | None = None
         self.last_usage = Usage()
         self.last_cache_hit = False
 
@@ -141,7 +143,7 @@ class BenchmarkLLMCache:
         self,
         request_digest: str,
         schema: type[T],
-    ) -> tuple[T, Usage, str] | None:
+    ) -> tuple[T, Usage, str, str | None] | None:
         matching_models: set[str] = set()
         for path in self.cache_dir.glob("*.json") if self.cache_dir.exists() else ():
             row = _read_entry(path)
@@ -171,7 +173,8 @@ class BenchmarkLLMCache:
                 extra={"path": str(path), "error": type(exc).__name__},
             )
             return None
-        return parsed, usage, model_id
+        host = row.get("provider_host")
+        return parsed, usage, model_id, host if isinstance(host, str) else None
 
     def __call__(
         self,
@@ -182,14 +185,16 @@ class BenchmarkLLMCache:
         *,
         temperature: float,
         max_tokens: int,
+        run_id: str | None = None,
     ) -> tuple[T, Usage]:
         request_digest = self._request_digest(role, system, user, schema, temperature, max_tokens)
         if self.replay_only:
             cached = self._load(request_digest, schema)
             if cached is None:
                 raise ReplayCacheError("replay cache miss for this benchmark request")
-            parsed, usage, model_id = cached
+            parsed, usage, model_id, host = cached
             self.last_model_id = model_id
+            self.last_provider_host = host
             self.last_usage = usage
             self.last_cache_hit = True
             return parsed, usage
@@ -216,6 +221,8 @@ class BenchmarkLLMCache:
                 )
             else:
                 self.last_model_id = model_id
+                host = row.get("provider_host")
+                self.last_provider_host = host if isinstance(host, str) else None
                 self.last_usage = usage
                 self.last_cache_hit = True
                 return parsed, usage
@@ -227,14 +234,17 @@ class BenchmarkLLMCache:
             schema,
             temperature=temperature,
             max_tokens=max_tokens,
+            run_id=run_id,
         )
         self.last_model_id = model_id
+        self.last_provider_host = provider_host()
         self.last_usage = usage
         self.last_cache_hit = False
         _atomic_write(
             path,
             {
                 "resolved_model_id": model_id,
+                "provider_host": self.last_provider_host,
                 "salt": self.salt,
                 "prompt_hash": self.prompt_hash,
                 "parsed": parsed.model_dump(mode="json"),

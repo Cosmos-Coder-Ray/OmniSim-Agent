@@ -1,9 +1,12 @@
 import logging
+import random
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 import requests
 from pydantic import BaseModel, ConfigDict, TypeAdapter
@@ -19,9 +22,18 @@ from tavily.errors import TimeoutError as TavilyTimeoutError
 
 from omnisim.config import Settings
 from omnisim.knowledge.cache import CACHE_DIR, cache_file, read_cache, write_cache
+from omnisim.knowledge.errors import KnowledgeUnavailable
 from omnisim.knowledge.usage import CALL_LOG_PATH, log_call
 from omnisim.knowledge.verifier import normalize_text, verified_only, verify_spec
 from omnisim.llm.nebius import chat_json
+from omnisim.resilience import (
+    CALL_DEADLINE_S,
+    CircuitBreaker,
+    CircuitOpenError,
+    RetryDeadlineExceeded,
+    parse_retry_after,
+    retry_call,
+)
 from omnisim.schemas import ErrorMapping, Evidence, FailureKind, HardwareSpec
 
 log = logging.getLogger(__name__)
@@ -33,6 +45,7 @@ SEARCH_DEPTH = "advanced"
 MAX_RESULTS = 20
 EXTRACT_DEPTH = "advanced"
 _KEYWORDS = ("torque", "velocity", "joint", "limit", "error", "fault", "collision", "safety")
+_circuit = CircuitBreaker()
 
 
 class LimitDraft(BaseModel):
@@ -105,13 +118,14 @@ def _client() -> TavilyClient:
     return TavilyClient(api_key=key)
 
 
-def _get_client(op: str, run_id: str | None, call_log_path: Path) -> TavilyClient:
+def _get_client(op: str, run_id: str | None, call_id: str, call_log_path: Path) -> TavilyClient:
     try:
         return _client()
     except ValueError as exc:
         log_call(
             {
                 "run_id": run_id,
+                "call_id": call_id,
                 "op": op,
                 "cache": "miss",
                 "latency_s": 0.0,
@@ -121,90 +135,94 @@ def _get_client(op: str, run_id: str | None, call_log_path: Path) -> TavilyClien
             },
             path=call_log_path,
         )
-        raise
+        raise KnowledgeUnavailable("tavily client unavailable") from exc
 
 
 def _run_live(
     op: str,
     run_id: str | None,
-    call,
+    call: Callable[[float], Any],
     *,
     call_log_path: Path,
+    call_id: str,
+    sleep: Callable[[float], None] | None = None,
+    clock: Callable[[], float] | None = None,
+    rng: Callable[[], float] | None = None,
 ) -> Any:
-    retried = False
-    while True:
+    active_sleep = sleep or time.sleep
+    active_clock = clock or time.monotonic
+    active_rng = rng or random.SystemRandom().random
+    deadline = active_clock() + CALL_DEADLINE_S
+    attempt = 0
+
+    def status_code(error: Exception) -> int | None:
+        status = getattr(error, "status_code", None)
+        response = getattr(error, "response", None)
+        return status if isinstance(status, int) else getattr(response, "status_code", None)
+
+    def retryable(error: Exception) -> bool:
+        status = status_code(error)
+        return (
+            isinstance(error, (requests.Timeout, requests.ConnectionError, TavilyTimeoutError))
+            or isinstance(error, UsageLimitExceededError)
+            or status == 429
+            or (status is not None and status >= 500)
+        )
+
+    def retry_after(error: Exception) -> float | None:
+        value = getattr(error, "retry_after_seconds", None)
+        if value is not None:
+            try:
+                return max(0.0, float(value))
+            except (TypeError, ValueError):
+                return None
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", None)
+        value = headers.get("Retry-After") if headers is not None else None
+        return parse_retry_after(value)
+
+    def transition(state: str) -> None:
+        log_call(
+            {
+                "run_id": run_id,
+                "call_id": call_id,
+                "op": op,
+                "event": f"circuit_{state}",
+            },
+            path=call_log_path,
+        )
+        log.warning("provider circuit %s", state, extra={"provider": "tavily"})
+
+    def record_attempt() -> Any:
+        nonlocal attempt
+        attempt += 1
         started = time.perf_counter()
         try:
-            result = call()
-        except (requests.Timeout, TavilyTimeoutError) as exc:
-            latency = time.perf_counter() - started
-            log_call(
-                {
-                    "run_id": run_id,
-                    "op": op,
-                    "cache": "miss",
-                    "latency_s": latency,
-                    "n_results": 0,
-                    "ok": False,
-                    "error": type(exc).__name__,
-                },
-                path=call_log_path,
-            )
-            if not retried:
-                retried = True
-                time.sleep(0.25)
-                continue
-            raise
-        except requests.HTTPError as exc:
-            latency = time.perf_counter() - started
-            status = exc.response.status_code if exc.response is not None else None
-            log_call(
-                {
-                    "run_id": run_id,
-                    "op": op,
-                    "cache": "miss",
-                    "latency_s": latency,
-                    "n_results": 0,
-                    "ok": False,
-                    "error": type(exc).__name__,
-                },
-                path=call_log_path,
-            )
-            if status is not None and status >= 500 and not retried:
-                retried = True
-                time.sleep(0.25)
-                continue
-            raise
-        except requests.RequestException as exc:
-            log_call(
-                {
-                    "run_id": run_id,
-                    "op": op,
-                    "cache": "miss",
-                    "latency_s": time.perf_counter() - started,
-                    "n_results": 0,
-                    "ok": False,
-                    "error": type(exc).__name__,
-                },
-                path=call_log_path,
-            )
-            raise
+            result = call(max(0.01, min(30.0, deadline - active_clock())))
         except (
+            requests.RequestException,
+            TavilyTimeoutError,
             BadRequestError,
             ForbiddenError,
             InvalidAPIKeyError,
             TavilyKeylessLimitError,
             UsageLimitExceededError,
         ) as exc:
+            status = status_code(exc)
+            is_transport = retryable(exc)
             log_call(
                 {
                     "run_id": run_id,
+                    "call_id": call_id,
+                    "attempt": attempt,
                     "op": op,
                     "cache": "miss",
                     "latency_s": time.perf_counter() - started,
                     "n_results": 0,
                     "ok": False,
                     "error": type(exc).__name__,
+                    "status_code": status,
+                    "failure_kind": "transport" if is_transport else "request",
                 },
                 path=call_log_path,
             )
@@ -213,16 +231,76 @@ def _run_live(
         log_call(
             {
                 "run_id": run_id,
+                "call_id": call_id,
+                "attempt": attempt,
                 "op": op,
                 "cache": "miss",
                 "latency_s": time.perf_counter() - started,
                 "n_results": result_count,
                 "ok": True,
-                "error": None,
+                "failure_kind": None,
             },
             path=call_log_path,
         )
         return result
+
+    try:
+        _circuit.before_call()
+    except CircuitOpenError as exc:
+        log_call(
+            {
+                "run_id": run_id,
+                "call_id": call_id,
+                "op": op,
+                "event": "circuit_rejected",
+                "ok": False,
+                "error": "circuit_open",
+            },
+            path=call_log_path,
+        )
+        raise KnowledgeUnavailable("circuit open") from exc
+
+    try:
+        return retry_call(
+            record_attempt,
+            retryable=retryable,
+            retry_after=retry_after,
+            deadline=deadline,
+            sleep=active_sleep,
+            clock=active_clock,
+            rng=active_rng,
+            on_success=lambda: _circuit.success(on_transition=transition),
+            on_nonretryable=lambda error: (
+                _circuit.success(on_transition=transition)
+                if isinstance(
+                    error,
+                    (
+                        requests.RequestException,
+                        TavilyTimeoutError,
+                        BadRequestError,
+                        ForbiddenError,
+                        InvalidAPIKeyError,
+                        TavilyKeylessLimitError,
+                        UsageLimitExceededError,
+                    ),
+                )
+                else None
+            ),
+            on_exhausted=lambda error: _circuit.exhausted(on_transition=transition),
+        )
+    except CircuitOpenError as exc:
+        raise KnowledgeUnavailable("circuit open") from exc
+    except (
+        requests.RequestException,
+        TavilyTimeoutError,
+        BadRequestError,
+        ForbiddenError,
+        InvalidAPIKeyError,
+        TavilyKeylessLimitError,
+        UsageLimitExceededError,
+        RetryDeadlineExceeded,
+    ) as exc:
+        raise KnowledgeUnavailable(f"tavily request failed ({type(exc).__name__})") from exc
 
 
 def _search(
@@ -241,6 +319,7 @@ def _search(
         "include_domains": list(domains),
         "extract_depth": EXTRACT_DEPTH,
     }
+    call_id = uuid4().hex
     path = cache_file("search", params, cache_dir=cache_dir)
     started = time.perf_counter()
     cached = read_cache(path)
@@ -250,6 +329,7 @@ def _search(
         log_call(
             {
                 "run_id": run_id,
+                "call_id": call_id,
                 "op": "search",
                 "cache": "hit",
                 "latency_s": time.perf_counter() - started,
@@ -259,17 +339,19 @@ def _search(
             path=call_log_path,
         )
         return results
-    sdk = client if client is not None else _get_client("search", run_id, call_log_path)
+    sdk = client if client is not None else _get_client("search", run_id, call_id, call_log_path)
     response = _run_live(
         "search",
         run_id,
-        lambda: sdk.search(
+        lambda timeout: sdk.search(
             query=query,
             search_depth=SEARCH_DEPTH,
             max_results=MAX_RESULTS,
             include_domains=list(domains),
+            timeout=timeout,
         ),
         call_log_path=call_log_path,
+        call_id=call_id,
     )
     results = response.get("results", []) if isinstance(response, dict) else []
     results = _filter_hits(results, domains)
@@ -314,6 +396,7 @@ def _extract(
         path = cache_file("extract", params, cache_dir=cache_dir)
         paths[url] = path
         params_by_url[url] = params
+        call_id = uuid4().hex
         started = time.perf_counter()
         cached = read_cache(path)
         if isinstance(cached, dict) and isinstance(cached.get("content"), str):
@@ -321,6 +404,7 @@ def _extract(
             log_call(
                 {
                     "run_id": run_id,
+                    "call_id": call_id,
                     "op": "extract",
                     "cache": "hit",
                     "latency_s": time.perf_counter() - started,
@@ -333,12 +417,14 @@ def _extract(
             missing.append(url)
     if not missing:
         return pages
-    sdk = client if client is not None else _get_client("extract", run_id, call_log_path)
+    call_id = uuid4().hex
+    sdk = client if client is not None else _get_client("extract", run_id, call_id, call_log_path)
     response = _run_live(
         "extract",
         run_id,
-        lambda: sdk.extract(urls=missing, extract_depth=EXTRACT_DEPTH),
+        lambda timeout: sdk.extract(urls=missing, extract_depth=EXTRACT_DEPTH, timeout=timeout),
         call_log_path=call_log_path,
+        call_id=call_id,
     )
     for row in response.get("results", []) if isinstance(response, dict) else []:
         if not isinstance(row, dict) or not isinstance(row.get("url"), str):

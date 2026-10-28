@@ -1,0 +1,2 @@
+class KnowledgeUnavailable(RuntimeError):
+    pass
