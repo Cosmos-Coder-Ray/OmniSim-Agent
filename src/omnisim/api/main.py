@@ -179,25 +179,37 @@ def _episodes(path: Path, campaign_id: str) -> list[EpisodeResult] | None:
     return episodes
 
 
-def _campaign_warnings(events: list[CampaignEvent], episodes: list[EpisodeResult]) -> list[str]:
+def _campaign_warnings(
+    events: list[CampaignEvent], episodes: list[EpisodeResult], cache_hits: int = 0
+) -> list[str]:
     warnings: list[str] = []
-    if any(
+    fallback_batches = sum(
         event.type == "hypothesis"
         and any(origin != "llm" for origin in event.data.get("origins", []))
         for event in events
-    ):
-        warnings.append("Some scenario proposals used deterministic exploration.")
-    if any(event.type == "spec_ready" and not event.data.get("ok", False) for event in events):
-        warnings.append("Hardware evidence was unavailable for part of this campaign.")
-    if any(event.type == "diagnosis_ready" and not event.data.get("ok", False) for event in events):
-        warnings.append("Some failure diagnoses were unavailable.")
-    if any(episode.failures for episode in episodes):
-        warnings.append("One or more simulated episodes triggered safety detectors.")
+    )
+    spec_failures = sum(
+        event.type == "spec_ready" and not event.data.get("ok", False) for event in events
+    )
+    diagnosis_failures = sum(
+        event.type == "diagnosis_ready" and not event.data.get("ok", False) for event in events
+    )
+    episode_failures = sum(bool(episode.failures) for episode in episodes)
+    if fallback_batches:
+        warnings.append(f"{fallback_batches} Nemotron batches included deterministic proposals.")
+    if spec_failures:
+        warnings.append(f"{spec_failures} hardware evidence stages were unavailable.")
+    if diagnosis_failures:
+        warnings.append(f"{diagnosis_failures} diagnoses were unavailable.")
+    if episode_failures:
+        warnings.append(f"{episode_failures} episodes triggered safety detectors.")
     if any(
         event.type == "campaign_done" and event.data.get("status") == "token_cap"
         for event in events
     ):
         warnings.append("The campaign reached its token budget.")
+    if cache_hits:
+        warnings.append(f"{cache_hits} manufacturer evidence lookups used the local cache.")
     return warnings
 
 
@@ -287,6 +299,7 @@ def _recorded_state(name: str, directory: Path, campaign: CampaignResult) -> Cam
         created_at=started_at,
         started_at=started_at,
         finished_at=(str(terminal.ts) if terminal is not None else None),
+        warnings=_campaign_warnings(campaign.events, campaign.episodes),
     )
 
 
@@ -690,9 +703,11 @@ def create_app(
             episodes = _episodes(run_dir, campaign_id)
             if episodes is None:
                 return _error_response(500, "internal_error", "campaign episodes are unavailable")
-        warnings = _campaign_warnings(events, episodes or [])
-        if _run_cache_hits(active_paths.data / "knowledge_calls.jsonl", campaign_id):
-            warnings.append("Some manufacturer evidence came from the local cache.")
+        warnings = _campaign_warnings(
+            events,
+            episodes or [],
+            _run_cache_hits(active_paths.data / "knowledge_calls.jsonl", campaign_id),
+        )
         return CampaignState(
             campaign_id=campaign_id,
             status=record.status,

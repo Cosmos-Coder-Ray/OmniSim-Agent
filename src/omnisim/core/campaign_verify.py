@@ -108,15 +108,16 @@ def run_campaign_verification(
         lambda off, on: bool(off["kinds"]) and bool(on["blocked"]),
         lambda off, on: bool(off["kinds"]) and bool(on["kinds"]),
     ):
+        group: list[tuple[int, dict[str, Any]]] = []
         for item in scenarios:
             off, on = item["off"], item["on"]
             if off["infrastructure_error"] or on["infrastructure_error"]:
                 continue
             if predicate(off, on):
-                cases.append((int(item["index"]), item))
+                group.append((int(item["index"]), item))
+        cases.extend(sorted(group)[: 3 - len(cases)])
         if len(cases) >= 3:
             break
-    cases = sorted(dict(cases).items())[:3]
     showcases: list[dict[str, object]] = []
     if cases:
         runner = verification_runner or EpisodeRunner()
@@ -152,9 +153,30 @@ def run_campaign_verification(
                     or off_kinds != item["off"]["kinds"]
                 ):
                     continue
+                if not isinstance(off, EpisodeResult):
+                    continue
                 blocked = isinstance(on, EpisodeBlocked)
+                if isinstance(on, EpisodeError):
+                    continue
                 if blocked != item["on"]["blocked"] or on_kinds != item["on"]["kinds"]:
                     continue
+                if isinstance(on, EpisodeResult) != (item["on"]["result"] is not None):
+                    continue
+                expected_off = dict(item["off"]["result"])
+                actual_off = off.model_dump(mode="json")
+                for result in (expected_off, actual_off):
+                    result.pop("episode_id", None)
+                    result.pop("trajectory_path", None)
+                if expected_off != actual_off:
+                    continue
+                if isinstance(on, EpisodeResult):
+                    expected_on = dict(item["on"]["result"])
+                    actual_on = on.model_dump(mode="json")
+                    for result in (expected_on, actual_on):
+                        result.pop("episode_id", None)
+                        result.pop("trajectory_path", None)
+                    if expected_on != actual_on:
+                        continue
                 showcases.append(
                     {
                         "scenario_index": index,
@@ -164,13 +186,13 @@ def run_campaign_verification(
                         "on_blocked": blocked,
                         "off_trajectory": Path(off.trajectory_path)
                         .resolve()
-                        .relative_to(outcome.run_dir.resolve())
+                        .relative_to((outcome.run_dir / "trajectories").resolve())
                         .as_posix()
                         if isinstance(off, EpisodeResult) and off.trajectory_path
                         else None,
                         "on_trajectory": Path(on.trajectory_path)
                         .resolve()
-                        .relative_to(outcome.run_dir.resolve())
+                        .relative_to((outcome.run_dir / "trajectories").resolve())
                         .as_posix()
                         if isinstance(on, EpisodeResult) and on.trajectory_path
                         else None,

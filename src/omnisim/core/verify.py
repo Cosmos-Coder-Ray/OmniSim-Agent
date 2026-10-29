@@ -393,6 +393,9 @@ def verify(
                     "params": scenario_list[index].model_dump(mode="json"),
                     "off": {
                         "infrastructure_error": isinstance(off_result, EpisodeError),
+                        "result": off_result.model_dump(mode="json")
+                        if isinstance(off_result, EpisodeResult)
+                        else None,
                         "kinds": sorted({event.kind for event in off_result.failures})
                         if isinstance(off_result, EpisodeResult)
                         else [],
@@ -400,6 +403,9 @@ def verify(
                     "on": {
                         "blocked": on_result is None,
                         "infrastructure_error": isinstance(on_result, EpisodeError),
+                        "result": on_result.model_dump(mode="json")
+                        if isinstance(on_result, EpisodeResult)
+                        else None,
                         "kinds": sorted({event.kind for event in on_result.failures})
                         if isinstance(on_result, EpisodeResult)
                         else [],

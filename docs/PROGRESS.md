@@ -71,6 +71,6 @@
 ## Phase 10B: hardening
 
 - Implemented: shared provider retries and circuit breakers; caller fallback policies; worker/job recovery; structured JSON audit logs; health degradation and campaign warning fields; campaign evidence and verification routes; scenario-count injection and showcase reruns; OpenAPI/TypeScript updates; HTTP E2E and repeat commands.
-- Verified: Group 1 `make check` passed (330 tests, 5 slow deselected); Group 2 focused tests passed (114) and `make check` passed (355 tests, 5 slow deselected); Group 4 focused tests passed (41).
-- Next: run final E2E repeat, slow simulation, branch coverage, and full check acceptance.
+- Verified: Group 1 `make check` passed (330 tests, 5 slow deselected); Group 2 focused tests passed (114) and `make check` passed (355 tests, 5 slow deselected); Group 4 focused tests passed (41); final `make check` passed (358 tests, 5 slow deselected); `make e2e` passed; `make e2e-repeat` passed all five runs; `make test-slow` passed all five tests; branch coverage passed (363 tests, 81% total branch coverage); OpenAPI export is current.
+- Next: none for Phase 10B hardening.
 - Blockers: no live Nebius or Tavily calls were made.
