@@ -37,6 +37,7 @@ packages = ["src/omnisim"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = ["slow: longer simulation checks kept out of the default test run"]
 
 [tool.pyright]

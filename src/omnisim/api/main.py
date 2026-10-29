@@ -70,10 +70,6 @@ TERMINAL_STATUSES = frozenset(
 )
 
 
-class PayloadTooLarge(Exception):
-    pass
-
-
 class RequestBodyLimitMiddleware:
     def __init__(self, app: ASGIApp, max_bytes: int):
         self.app = app
@@ -92,21 +88,30 @@ class RequestBodyLimitMiddleware:
                     return
             except ValueError:
                 pass
-        size = 0
-
-        async def limited_receive() -> Message:
-            nonlocal size
+        body = bytearray()
+        more_body = True
+        while more_body:
             message = await receive()
-            if message["type"] == "http.request":
-                size += len(message.get("body", b""))
-                if size > self.max_bytes:
-                    raise PayloadTooLarge
-            return message
+            if message["type"] == "http.disconnect":
+                return
+            if message["type"] != "http.request":
+                continue
+            body.extend(message.get("body", b""))
+            if len(body) > self.max_bytes:
+                await self._reject(send)
+                return
+            more_body = message.get("more_body", False)
 
-        try:
-            await self.app(scope, limited_receive, send)
-        except PayloadTooLarge:
-            await self._reject(send)
+        sent = False
+
+        async def replay_body() -> Message:
+            nonlocal sent
+            if sent:
+                return await receive()
+            sent = True
+            return {"type": "http.request", "body": bytes(body), "more_body": False}
+
+        await self.app(scope, replay_body, send)
 
     async def _reject(self, send: Send) -> None:
         body = (

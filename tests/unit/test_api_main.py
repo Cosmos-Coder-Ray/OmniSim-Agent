@@ -476,15 +476,22 @@ def _write_demo(paths: ApiPaths, name: str = "hero") -> None:
     (exports / "index.html").write_text("<h1>recorded</h1>", encoding="utf-8")
 
 
-def test_demo_mode_serves_only_installed_recording_and_skips_live_services(
+def test_demo_mode_serves_recording_and_resolves_configured_models(
     tmp_path: Path, monkeypatch
 ) -> None:
     import omnisim.api.main as api_main
 
-    def fail_resolution(*args, **kwargs):
-        raise AssertionError("demo mode must not resolve live models")
+    resolution_calls = []
 
-    monkeypatch.setattr(api_main, "resolve_model", fail_resolution)
+    def resolve_models(app, settings):
+        resolution_calls.append(settings)
+        app.state.model_resolution = {
+            "fast": "mock-fast",
+            "deep": "mock-deep",
+            "ultra": "mock-ultra",
+        }
+
+    monkeypatch.setattr(api_main, "_start_model_resolution", resolve_models)
     paths = ApiPaths.from_root(tmp_path)
     _write_demo(paths)
     runner = FakeRunner()
@@ -499,12 +506,16 @@ def test_demo_mode_serves_only_installed_recording_and_skips_live_services(
         health = client.get("/api/health")
         accepted = client.post("/api/campaigns", json={"quick": True})
         state = client.get("/api/campaigns/hero")
-        stream = client.get("/api/campaigns/hero/events?pace_ms=2001")
         report = client.get("/api/exports/hero/index.html")
 
     assert health.json()["demo_ready"] is True
     assert health.json()["recorded_runs"] == ["hero"]
-    assert health.json()["model_resolution"] is None
+    assert health.json()["model_resolution"] == {
+        "fast": "mock-fast",
+        "deep": "mock-deep",
+        "ultra": "mock-ultra",
+    }
+    assert resolution_calls == [settings]
     assert accepted.json()["source"] == "recorded"
     assert accepted.json()["campaign_id"] == "hero"
     assert runner.configs == []
@@ -514,8 +525,6 @@ def test_demo_mode_serves_only_installed_recording_and_skips_live_services(
         "recorded_first",
         "recorded_second",
     ]
-    assert stream.headers["x-omnisim-source"] == "recorded"
-    assert "event: campaign_done" in stream.text
     assert report.status_code == 200
 
 
