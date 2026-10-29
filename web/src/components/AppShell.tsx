@@ -3,7 +3,8 @@ import { dataClient, dataMode } from "../api/client";
 import type { CampaignView, DataResult, Replay } from "../api/types";
 import { validateReplay } from "../replay/validation";
 import { tabs, useUrlStore } from "../state/urlStore";
-import { PlaceholderTab } from "./PlaceholderTab";
+import { BenchmarkTab, EnvelopeTab, EvidenceTab } from "./DataTabs";
+import { CampaignTabs } from "./CampaignTabs";
 import { ReplayView } from "./ReplayView";
 
 export function AppShell() {
@@ -234,14 +235,20 @@ export function AppShell() {
               />
             )}
           </>
+        ) : tab === "campaign" || tab === "atlas" ? (
+          <CampaignTabs
+            campaign={campaign}
+            loading={loadingCampaign || campaignPending !== null}
+            error={campaignError}
+            atlas={tab === "atlas"}
+            onOpenEpisode={(id) => { setEpisode(id); setTab("replay"); }}
+          />
+        ) : tab === "evidence" ? (
+          <EvidenceTab campaignId={campaignId} />
+        ) : tab === "envelope" ? (
+          <EnvelopeTab campaignId={campaignId} />
         ) : (
-          <PlaceholderTab title={tabs.find((item) => item.id === tab)?.label ?? "Workspace"}>
-            {tab === "campaign" && "Live campaign controls and event streaming are not connected yet."}
-            {tab === "atlas" && "Failure clusters and minimized repros are not connected yet."}
-            {tab === "evidence" && "Evidence browsing is not connected yet."}
-            {tab === "envelope" && "Verified operating limits are not connected yet."}
-            {tab === "benchmarks" && "Benchmark comparisons are not connected yet."}
-          </PlaceholderTab>
+          <BenchmarkTab />
         )}
       </section>
     </main>

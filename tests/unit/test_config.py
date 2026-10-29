@@ -20,6 +20,8 @@ SETTING_NAMES = {
     "OMNISIM_API_MAX_CONCURRENT_CAMPAIGNS",
     "OMNISIM_API_MAX_QUEUE",
     "OMNISIM_API_MAX_BUDGET",
+    "OMNISIM_API_MAX_BODY_BYTES",
+    "OMNISIM_TRUST_PROXY_HEADERS",
     "OMNISIM_API_QUICK_MIN_TOKENS",
     "OMNISIM_API_FULL_MIN_TOKENS",
     "OMNISIM_API_FULL_VERIFY_MIN_TOKENS",
@@ -51,6 +53,8 @@ def test_settings_use_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.OMNISIM_API_MAX_CONCURRENT_CAMPAIGNS == 1
     assert settings.OMNISIM_API_MAX_QUEUE == 3
     assert settings.OMNISIM_API_MAX_BUDGET == 100
+    assert settings.OMNISIM_API_MAX_BODY_BYTES == 65536
+    assert settings.OMNISIM_TRUST_PROXY_HEADERS is False
     assert settings.OMNISIM_API_QUICK_MIN_TOKENS == 60000
     assert settings.OMNISIM_API_FULL_MIN_TOKENS == 200000
     assert settings.OMNISIM_API_FULL_VERIFY_MIN_TOKENS == 250000
@@ -101,6 +105,7 @@ def test_settings_read_process_environment(monkeypatch: pytest.MonkeyPatch) -> N
             "0",
             "OMNISIM_API_MAX_CONCURRENT_CAMPAIGNS must be positive",
         ),
+        ("OMNISIM_API_MAX_BODY_BYTES", "0", "OMNISIM_API_MAX_BODY_BYTES must be positive"),
     ],
 )
 def test_settings_reject_invalid_values(

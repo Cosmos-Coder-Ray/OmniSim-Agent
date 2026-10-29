@@ -18,6 +18,8 @@ class Settings:
     OMNISIM_API_MAX_CONCURRENT_CAMPAIGNS: int = 1
     OMNISIM_API_MAX_QUEUE: int = 3
     OMNISIM_API_MAX_BUDGET: int = 100
+    OMNISIM_API_MAX_BODY_BYTES: int = 65536
+    OMNISIM_TRUST_PROXY_HEADERS: bool = False
     # UNMEASURED admission estimates. Replace after live runs with about 1.3x measured usage.
     OMNISIM_API_QUICK_MIN_TOKENS: int = 60000
     OMNISIM_API_FULL_MIN_TOKENS: int = 200000
@@ -35,6 +37,7 @@ class Settings:
             "OMNISIM_API_MAX_CONCURRENT_CAMPAIGNS": 1,
             "OMNISIM_API_MAX_QUEUE": 3,
             "OMNISIM_API_MAX_BUDGET": 100,
+            "OMNISIM_API_MAX_BODY_BYTES": 65536,
             "OMNISIM_API_QUICK_MIN_TOKENS": 60000,
             "OMNISIM_API_FULL_MIN_TOKENS": 200000,
             "OMNISIM_API_FULL_VERIFY_MIN_TOKENS": 250000,
@@ -65,6 +68,10 @@ class Settings:
         else:
             raise ValueError("OMNISIM_DEMO_MODE must be a boolean")
 
+        trust_proxy = os.environ.get("OMNISIM_TRUST_PROXY_HEADERS", "false").strip().lower()
+        if trust_proxy not in {"true", "1", "yes", "on", "false", "0", "no", "off"}:
+            raise ValueError("OMNISIM_TRUST_PROXY_HEADERS must be a boolean")
+
         return cls(
             NEBIUS_API_KEY=os.environ.get("NEBIUS_API_KEY", ""),
             NEBIUS_BASE_URL=os.environ.get("NEBIUS_BASE_URL", ""),
@@ -81,5 +88,6 @@ class Settings:
                 "OMNISIM_API_OTHER_RATE_LIMIT", "120/minute"
             ),
             OMNISIM_API_DEMO_RUN=os.environ.get("OMNISIM_API_DEMO_RUN", "hero"),
+            OMNISIM_TRUST_PROXY_HEADERS=trust_proxy in {"true", "1", "yes", "on"},
             **values,
         )

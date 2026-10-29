@@ -27,4 +27,19 @@ describe("API client results", () => {
     await expect(createApiClient().getCampaign("run-1"))
       .resolves.toEqual({ kind: "error", message: "offline" });
   });
+
+  it("requests envelope, evidence, and benchmark data from the API", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createApiClient("/api");
+    await client.getEnvelope("run/1");
+    await client.getEvidence("run/1");
+    await client.getBenchmark();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/exports/run%2F1/safe_envelope.json",
+      "/api/exports/run%2F1/verification.json",
+      "/api/campaigns/run%2F1/evidence",
+      "/api/benchmark",
+    ]);
+  });
 });

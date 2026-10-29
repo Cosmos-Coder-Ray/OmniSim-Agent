@@ -1,9 +1,12 @@
 import type {
   CampaignView,
+  Benchmark,
   DataClient,
   DataResult,
   DataSource,
   EpisodeResult,
+  EnvelopeView,
+  EvidenceView,
   HealthResponse,
   Replay,
 } from "./types";
@@ -100,6 +103,27 @@ export function createApiClient(base = apiBase): DataClient {
     getHealth() {
       return request<HealthResponse>(`${root}/health`);
     },
+
+    async getEnvelope(campaignId) {
+      const path = `${root}/exports/${encodeURIComponent(campaignId)}`;
+      const [envelope, verification] = await Promise.all([
+        request<EnvelopeView>(`${path}/safe_envelope.json`),
+        request<NonNullable<EnvelopeView["verification"]>>(`${path}/verification.json`),
+      ]);
+      if (envelope.kind !== "ok") return envelope;
+      return {
+        kind: "ok",
+        data: { ...envelope.data, verification: verification.kind === "ok" ? verification.data : null },
+      };
+    },
+
+    getEvidence(campaignId) {
+      return request<EvidenceView>(`${root}/campaigns/${encodeURIComponent(campaignId)}/evidence`);
+    },
+
+    getBenchmark() {
+      return request<Benchmark>(`${root}/benchmark`);
+    },
   };
 }
 
@@ -118,6 +142,18 @@ function createMockClient(): DataClient {
 
     getHealth() {
       return Promise.resolve({ kind: "unavailable", reason: "Health is unavailable in mock mode." });
+    },
+
+    getEnvelope() {
+      return mockJson<EnvelopeView>("/mock/envelope.json");
+    },
+
+    getEvidence() {
+      return mockJson<EvidenceView>("/mock/evidence.json");
+    },
+
+    getBenchmark() {
+      return mockJson<Benchmark>("/mock/benchmark.json");
     },
   };
 }

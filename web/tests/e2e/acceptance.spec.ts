@@ -99,7 +99,8 @@ test("switches tabs by keyboard and keeps the replay usable at 360 pixels", asyn
   await replayTab.focus();
   await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("tab", { name: "Live Campaign" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText("Live campaign controls and event streaming are not connected yet.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Live Campaign" })).toBeVisible();
+  await expect(page.getByText("ep_016")).toBeVisible();
 
   await page.setViewportSize({ width: 360, height: 800 });
   await page.getByRole("tab", { name: "Replay" }).click();
@@ -109,4 +110,24 @@ test("switches tabs by keyboard and keeps the replay usable at 360 pixels", asyn
   const canvasFrame = await page.locator(".canvas-frame").boundingBox();
   expect(canvasFrame?.width).toBeGreaterThan(300);
   expect(canvasFrame?.height).toBeGreaterThan(220);
+});
+
+test("renders mock summaries across workspace tabs and opens an episode in replay", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Live Campaign" }).click();
+  await expect(page.getByRole("heading", { name: "Live Campaign" })).toBeVisible();
+  await page.getByRole("tab", { name: "Failure Atlas" }).click();
+  await expect(page.getByText("tracking_error:global")).toBeVisible();
+  await page.getByRole("tab", { name: "Evidence" }).click();
+  await expect(page.getByText("joint torque limit", { exact: true })).toBeVisible();
+  await expect(page.getByText("joint_reflex", { exact: false })).toBeVisible();
+  await page.getByRole("tab", { name: "Safe Envelope" }).click();
+  await expect(page.getByText("2 kg", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "safe_envelope.json" })).toBeVisible();
+  await page.getByRole("tab", { name: "Benchmarks" }).click();
+  await expect(page.getByRole("row", { name: /nemotron/ })).toBeVisible();
+  await page.getByRole("tab", { name: "Live Campaign" }).click();
+  await page.getByRole("button", { name: "ep_017" }).click();
+  await expect(page.getByRole("tab", { name: "Replay" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("Select episode")).toHaveValue("ep_017");
 });

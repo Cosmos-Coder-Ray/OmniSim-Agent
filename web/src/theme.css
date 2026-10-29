@@ -113,6 +113,31 @@ button:focus-visible, select:focus-visible, a:focus-visible, [tabindex]:focus-vi
 .placeholder-panel h2 { font-size: 20px; }
 .placeholder-panel p { max-width: 560px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .placeholder-note { margin-top: 10px; color: #7e8c99; font-size: 11px; }
+.data-panel { min-height: 360px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); }
+.data-heading { margin-bottom: 18px; }
+.data-heading h2 { margin: 0 0 5px; font-size: 20px; }
+.data-heading p, .data-section p { margin: 0; color: var(--muted); font-size: 12px; }
+.data-state { display: grid; min-height: 110px; place-items: center; color: var(--muted); }
+.data-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.data-section h3 { margin: 0 0 10px; font-size: 13px; }
+.metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.metric-card { display: flex; min-height: 76px; flex-direction: column; justify-content: center; gap: 8px; padding: 13px; border: 1px solid var(--line); border-radius: 7px; background: #0d141a; }
+.metric-card span, .data-table { color: var(--muted); font-size: 11px; }
+.metric-card strong { color: var(--text); font-size: 18px; font-variant-numeric: tabular-nums; }
+.table-scroll { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+.data-table th, .data-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.data-table thead th { color: var(--muted); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.data-table tbody th { color: var(--text); font-weight: 600; }
+.table-link { padding: 0; border: 0; background: none; color: var(--accent-strong); cursor: pointer; font: inherit; }
+.evidence-row { margin-bottom: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: #0d141a; }
+.data-row-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.verified-badge { padding: 4px 7px; border: 1px solid #65563a; border-radius: 99px; color: #e5c67f; font-size: 9px; }
+.verified-badge.is-verified { border-color: #327565; color: var(--accent-strong); }
+.evidence-value { margin: 8px 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.evidence-row blockquote { margin: 0 0 8px; color: var(--muted); font-size: 11px; }
+.evidence-row a, .artifact-links a { color: var(--accent-strong); font-size: 11px; }
+.artifact-links { display: flex; flex-wrap: wrap; gap: 14px; }
 
 @media (max-width: 640px) {
   .app-header { height: 54px; padding: 0 14px; }
@@ -122,6 +147,9 @@ button:focus-visible, select:focus-visible, a:focus-visible, [tabindex]:focus-vi
   .tab-button { min-height: 44px; padding: 0 11px; }
   .workspace-panel { padding: 14px 12px 24px; }
   .episode-toolbar { align-items: flex-start; flex-direction: column; margin-bottom: 12px; }
+  .data-panel { padding: 13px; }
+  .metric-grid { grid-template-columns: minmax(0, 1fr); }
+  .data-table { min-width: 570px; }
   .episode-select { width: 100%; justify-content: space-between; }
   .episode-select select { min-width: 0; flex: 1; }
   .replay-placeholder { padding: 11px; }

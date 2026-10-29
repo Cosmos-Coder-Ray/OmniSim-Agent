@@ -1,0 +1,36 @@
+services:
+  api:
+    build:
+      context: .
+      target: runtime
+    env_file:
+      - .env
+    environment:
+      OMNISIM_DEMO_MODE: ${OMNISIM_DEMO_MODE:-false}
+      OMNISIM_API_MAX_BUDGET: ${OMNISIM_API_MAX_BUDGET:-10}
+      OMNISIM_API_POST_RATE_LIMIT: ${OMNISIM_API_POST_RATE_LIMIT:-3/hour}
+      OMNISIM_API_OTHER_RATE_LIMIT: ${OMNISIM_API_OTHER_RATE_LIMIT:-120/minute}
+      OMNISIM_DAILY_TOKEN_CAP: ${OMNISIM_DAILY_TOKEN_CAP:-400000}
+      OMNISIM_API_DEMO_RUN: ${OMNISIM_API_DEMO_RUN:-hero}
+      OMNISIM_API_MAX_BODY_BYTES: ${OMNISIM_API_MAX_BODY_BYTES:-65536}
+      OMNISIM_TRUST_PROXY_HEADERS: "true"
+    volumes:
+      - ./data:/app/data
+      - ./runs:/app/runs
+      - ./exports:/app/exports
+  caddy:
+    build:
+      context: .
+      target: caddy-runtime
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+volumes:
+  caddy_data:
+  caddy_config:

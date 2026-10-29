@@ -1,0 +1,15 @@
+:80 {
+	request_body {
+		max_size 64KB
+	}
+	handle /api/* {
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

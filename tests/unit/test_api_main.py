@@ -104,6 +104,53 @@ def test_quick_campaign_cannot_request_verification(tmp_path: Path) -> None:
     assert response.status_code == 422
 
 
+def test_request_body_limit_returns_payload_too_large(tmp_path: Path) -> None:
+    settings = Settings(OMNISIM_API_MAX_BODY_BYTES=8)
+    with TestClient(app_for(tmp_path, settings=settings)) as client:
+        response = client.post("/api/campaigns", content=b"{" + b" " * 20 + b"}")
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "error": "payload_too_large",
+        "message": "request body exceeds maximum allowed size",
+    }
+
+
+def test_streamed_request_body_limit_returns_payload_too_large(tmp_path: Path) -> None:
+    settings = Settings(OMNISIM_API_MAX_BODY_BYTES=8)
+    chunks = iter((b"{", b" " * 20, b"}"))
+    with TestClient(app_for(tmp_path, settings=settings)) as client:
+        response = client.post("/api/campaigns", content=chunks)
+
+    assert response.status_code == 413
+    assert response.json()["error"] == "payload_too_large"
+
+
+def test_uptime_check_accepts_health_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    from contextlib import redirect_stdout
+
+    from scripts.uptime_check import check_health
+
+    class HealthResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b'{"token_usage": {}, "knowledge_usage": {}, "demo_ready": true}'
+
+    monkeypatch.setattr("scripts.uptime_check.urlopen", lambda *args, **kwargs: HealthResponse())
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert check_health("http://localhost:8000", check_demo=True)
+    assert "passed" in output.getvalue()
+
+
 def test_campaign_cancel_requests_cooperative_stop(tmp_path: Path) -> None:
     runner = FakeRunner()
     with TestClient(app_for(tmp_path, runner=runner)) as client:

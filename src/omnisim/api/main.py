@@ -22,6 +22,7 @@ from pydantic import ValidationError
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from omnisim.api.jobs import JobConfig, JobExit, JobRunner, ProcessJobRunner
 from omnisim.api.models import (
@@ -67,6 +68,50 @@ TRAJECTORY_PART = re.compile(r"^[A-Za-z0-9_.-]+$")
 TERMINAL_STATUSES = frozenset(
     {"completed", "cancelled", "error", "interrupted", "token_cap", "no_failures_found"}
 )
+
+
+class PayloadTooLarge(Exception):
+    pass
+
+
+class RequestBodyLimitMiddleware:
+    def __init__(self, app: ASGIApp, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = dict(scope["headers"])
+        content_length = headers.get(b"content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > self.max_bytes:
+                    await self._reject(send)
+                    return
+            except ValueError:
+                pass
+        size = 0
+
+        async def limited_receive() -> Message:
+            nonlocal size
+            message = await receive()
+            if message["type"] == "http.request":
+                size += len(message.get("body", b""))
+                if size > self.max_bytes:
+                    raise PayloadTooLarge
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except PayloadTooLarge:
+            await self._reject(send)
+
+    async def _reject(self, send: Send) -> None:
+        body = b'{"error":"payload_too_large","message":"request body exceeds maximum allowed size"}'
+        await send({"type": "http.response.start", "status": 413, "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
 
 
 def _stage_file(path: Path) -> CampaignStage | None:
@@ -418,7 +463,13 @@ def create_app(
 ) -> FastAPI:
     active_settings = settings or Settings.from_env()
     active_paths = paths or ApiPaths.from_root()
-    limiter = Limiter(key_func=get_remote_address)
+    def client_ip(request: Request) -> str:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded and active_settings.OMNISIM_TRUST_PROXY_HEADERS:
+            return forwarded.split(",", 1)[0].strip()
+        return get_remote_address(request)
+
+    limiter = Limiter(key_func=client_ip)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -435,7 +486,7 @@ def create_app(
                 "configured demo run is unavailable",
                 extra={"demo_run": active_settings.OMNISIM_API_DEMO_RUN},
             )
-        if not active_settings.OMNISIM_DEMO_MODE:
+        if not active_settings.OMNISIM_DEMO_MODE or active_settings.NEBIUS_API_KEY:
             _start_model_resolution(app, active_settings)
 
         def job_started(config: JobConfig) -> None:
@@ -475,6 +526,10 @@ def create_app(
     app.state.demo_ready = False
     app.state.recorded_runs = []
     app.state.limiter = limiter
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=active_settings.OMNISIM_API_MAX_BODY_BYTES,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[

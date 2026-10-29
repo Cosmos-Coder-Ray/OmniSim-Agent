@@ -91,9 +91,8 @@ The Makefile contains the intended API command:
 
     uv run --env-file .env uvicorn omnisim.api.main:app --host 0.0.0.0 --port 8000
 
-The current checkout does not yet include `src/omnisim/api/main.py`, so the API
-cannot be started until that entrypoint is implemented. When it is available,
-the command above loads `.env` and serves the API on:
+The API is implemented in `src/omnisim/api/main.py`. The command above loads
+`.env` and serves the API on:
 
     http://localhost:8000
 
@@ -102,10 +101,10 @@ Stop the server with `Ctrl+C`.
 7. Frontend status
 ------------------
 
-The current repository checkout contains mock frontend data under
-`web/public/mock`, but it does not currently contain a `package.json` or a
-frontend source tree. There is therefore no frontend dependency installation
-command to run yet. Do not run `pnpm install` in this checkout.
+The React frontend is implemented in `web/`. Install and run its checks with:
+
+    make web-setup
+    make web-check
 
 8. Useful project files
 ----------------------
