@@ -107,6 +107,14 @@ class ApiStore:
             ).fetchall()
         return [self._record(row) for row in rows]
 
+    def recent_outcomes(self, since: str) -> list[tuple[str, str]]:
+        with sqlite3.connect(self.path, timeout=5) as db:
+            rows = db.execute(
+                "SELECT status, finished_at FROM jobs WHERE finished_at >= ? ORDER BY finished_at DESC LIMIT 100",
+                (since,),
+            ).fetchall()
+        return [(str(status), str(finished_at)) for status, finished_at in rows]
+
     @staticmethod
     def _record(row: sqlite3.Row) -> JobRecord:
         return JobRecord(

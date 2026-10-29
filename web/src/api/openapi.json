@@ -365,6 +365,13 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -614,12 +621,30 @@
             ],
             "title": "Model Resolution"
           },
+          "provider_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Host"
+          },
           "queue": {
             "additionalProperties": {
               "type": "integer"
             },
             "title": "Queue",
             "type": "object"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
           },
           "recorded_runs": {
             "items": {
@@ -629,8 +654,11 @@
             "type": "array"
           },
           "status": {
-            "const": "ok",
             "default": "ok",
+            "enum": [
+              "ok",
+              "degraded"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -1136,6 +1164,43 @@
         "summary": "Stream Campaign Events"
       }
     },
+    "/api/campaigns/{campaign_id}/evidence": {
+      "get": {
+        "operationId": "getCampaignEvidence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Campaign Evidence"
+      }
+    },
     "/api/campaigns/{campaign_id}/trajectories/{trajectory_path}": {
       "get": {
         "operationId": "getCampaignTrajectory",
@@ -1210,6 +1275,43 @@
           }
         },
         "summary": "Campaign Trajectory"
+      }
+    },
+    "/api/campaigns/{campaign_id}/verification": {
+      "get": {
+        "operationId": "getCampaignVerification",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "campaign_id",
+            "required": true,
+            "schema": {
+              "title": "Campaign Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Campaign Verification"
       }
     },
     "/api/exports/{campaign_id}": {

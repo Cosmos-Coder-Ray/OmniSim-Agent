@@ -1,4 +1,4 @@
-.PHONY: setup check test-slow sim-smoke api web web-setup web-check web-e2e web-screenshot
+.PHONY: setup check test-slow sim-smoke api web web-setup web-check web-e2e web-screenshot e2e e2e-repeat
 
 setup:
 	uv sync
@@ -12,6 +12,12 @@ check:
 
 test-slow:
 	uv run pytest -q -m slow
+
+e2e:
+	uv run pytest -q tests/e2e -m "not slow"
+
+e2e-repeat:
+	uv run python scripts/e2e_repeat.py
 
 sim-smoke:
 	uv run python scripts/sim_smoke.py
