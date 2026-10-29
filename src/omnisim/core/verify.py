@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from math import inf, isfinite
 from pathlib import Path
 from time import monotonic
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -78,6 +78,7 @@ class VerificationResult:
     passed: bool
     wall_time_s: float
     failing_scenarios: tuple[dict[str, object], ...]
+    scenario_results: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -93,6 +94,7 @@ class RefinementResult:
     confirmation: VerificationResult
     tuning_seed: int
     confirmation_seed: int
+    showcases: tuple[dict[str, object], ...] = ()
 
 
 def _digest_seed(domain: str, seed: int, index: int = 0) -> int:
@@ -381,6 +383,41 @@ def verify(
             for index, result in enumerate(on_results)
             if isinstance(result, EpisodeResult) and result.failures
         )
+        scenario_results: list[dict[str, Any]] = []
+        for index in range(n):
+            off_result = baseline.results[index]
+            on_result = on_results[index]
+            scenario_results.append(
+                {
+                    "index": index,
+                    "params": scenario_list[index].model_dump(mode="json"),
+                    "off": {
+                        "infrastructure_error": isinstance(off_result, EpisodeError),
+                        "result": off_result.model_dump(mode="json")
+                        if isinstance(off_result, EpisodeResult)
+                        else None,
+                        "kinds": sorted({event.kind for event in off_result.failures})
+                        if isinstance(off_result, EpisodeResult)
+                        else [],
+                    },
+                    "on": {
+                        "blocked": on_result is None,
+                        "infrastructure_error": isinstance(on_result, EpisodeError),
+                        "result": on_result.model_dump(mode="json")
+                        if isinstance(on_result, EpisodeResult)
+                        else None,
+                        "kinds": sorted({event.kind for event in on_result.failures})
+                        if isinstance(on_result, EpisodeResult)
+                        else [],
+                        "final_error_m": on_result.final_ee_error_m
+                        if isinstance(on_result, EpisodeResult)
+                        else None,
+                        "complete": isinstance(on_result, EpisodeResult)
+                        and not on_result.failures
+                        and on_result.final_ee_error_m <= cfg.tracking_error_m,
+                    },
+                }
+            )
         return VerificationResult(
             n_scenarios=n,
             seed=seed,
@@ -414,6 +451,7 @@ def verify(
             passed=passed,
             wall_time_s=max(0.0, clock() - started),
             failing_scenarios=failing,
+            scenario_results=tuple(scenario_results),
         )
     finally:
         if own_runner:
@@ -433,19 +471,21 @@ def refine_and_verify(
     discovery_episodes: Sequence[EpisodeResult] = (),
     criteria: VerificationCriteria = VerificationCriteria(),
     stage_callback: Callable[[str], None] | None = None,
+    tuning_count: int = TUNING_SCENARIOS,
+    confirmation_count: int = CONFIRMATION_SCENARIOS,
 ) -> RefinementResult:
-    if workers <= 0:
-        raise ValueError("workers must be positive")
+    if workers <= 0 or tuning_count <= 0 or confirmation_count <= 0:
+        raise ValueError("workers and verification sample counts must be positive")
     tuning_seed, confirmation_seed = verification_seeds(campaign_seed)
     bounds = _validate_bounds(domain_bounds if domain_bounds is not None else scenario_bounds())
     tuning_scenarios = sample_scenarios(
-        TUNING_SCENARIOS,
+        tuning_count,
         tuning_seed,
         bounds,
         reserved_seeds=(campaign_seed,),
     )
     confirmation_scenarios = sample_scenarios(
-        CONFIRMATION_SCENARIOS,
+        confirmation_count,
         confirmation_seed,
         bounds,
         reserved_seeds=(campaign_seed, *(params.seed for params in tuning_scenarios)),
@@ -483,7 +523,7 @@ def refine_and_verify(
             result = verify(
                 candidate,
                 limits,
-                n=TUNING_SCENARIOS,
+                n=tuning_count,
                 seed=tuning_seed,
                 workers=workers,
                 cfg=cfg,
@@ -516,7 +556,7 @@ def refine_and_verify(
         confirmation = verify(
             selected,
             limits,
-            n=CONFIRMATION_SCENARIOS,
+            n=confirmation_count,
             seed=confirmation_seed,
             workers=workers,
             cfg=cfg,

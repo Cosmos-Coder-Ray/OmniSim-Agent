@@ -82,7 +82,7 @@ def test_extract_fetches_only_missing_urls(tmp_path) -> None:
     )
     assert pages[first_url] == "Synthetic cached page one"
     assert client.extract_calls == [
-        {"urls": ["https://docs.test/two"], "extract_depth": "advanced"}
+        {"urls": ["https://docs.test/two"], "extract_depth": "advanced", "timeout": 30.0}
     ]
     assert "Synthetic page for https://docs.test/two" in pages["https://docs.test/two"]
 

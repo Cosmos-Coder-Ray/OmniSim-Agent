@@ -141,6 +141,44 @@ def test_startup_reconciles_terminal_stage_and_interrupted_job(tmp_path: Path) -
     assert stale.json()["stage"] == "diagnosis"
 
 
+def test_event_stream_ends_for_interrupted_job(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    app = app_for(tmp_path, runner=runner)
+    with TestClient(app) as client:
+        accepted = client.post("/api/campaigns", json={"quick": True})
+        campaign_id = accepted.json()["campaign_id"]
+        app.state.store.set_status(campaign_id, "interrupted")
+
+        response = client.get(f"/api/campaigns/{campaign_id}/events")
+
+    assert response.status_code == 200
+    assert 'event: stream_end\ndata: {"status":"interrupted"}' in response.text
+
+
+def test_campaign_evidence_and_verification_routes(tmp_path: Path) -> None:
+    paths = ApiPaths.from_root(tmp_path)
+    campaign_id = "a" * 32
+    run_dir = paths.runs / campaign_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "spec.json").write_text(
+        json.dumps({"spec": {"robot": "Panda"}, "mismatches": []}), encoding="utf-8"
+    )
+    (run_dir / "verification.json").write_text(
+        json.dumps({"confirmation": {"passed": True}}), encoding="utf-8"
+    )
+    app = create_app(Settings(), job_runner=FakeRunner(), paths=paths)
+    with TestClient(app) as client:
+        app.state.store.create(campaign_id, {"quick": True})
+        evidence = client.get(f"/api/campaigns/{campaign_id}/evidence")
+        verification = client.get(f"/api/campaigns/{campaign_id}/verification")
+
+    assert evidence.status_code == 200
+    assert evidence.json()["spec"]["robot"] == "Panda"
+    assert evidence.json()["provenance"]["cache_hits"] == 0
+    assert verification.status_code == 200
+    assert verification.json()["confirmation"]["passed"] is True
+
+
 def test_health_returns_cached_state_without_waiting_for_model_resolution(
     tmp_path: Path, monkeypatch
 ) -> None:

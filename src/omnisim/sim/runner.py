@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import json
 import multiprocessing as mp
+import os
 import time
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
 from multiprocessing.pool import Pool
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 from queue import Empty, Queue
 
 import pybullet as p
 import pybullet_data
 
+from omnisim.audit_log import configure_logging
 from omnisim.core.shield import EpisodeBlocked, Shield
 from omnisim.schemas import (
     EpisodeResult,
@@ -26,6 +31,7 @@ from omnisim.sim.panda_env import PandaSim
 from omnisim.sim.telemetry import EpisodeTelemetry
 
 _PARENT_TIMEOUT_GRACE_S = 1.0
+_worker_start_queue = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +133,10 @@ def run_episode(
     )
 
 
-def _worker_init() -> None:
+def _worker_init(start_queue=None) -> None:
+    global _worker_start_queue
+    _worker_start_queue = start_queue
+    configure_logging()
     p.getAPIVersion()
     pybullet_data.getDataPath()
 
@@ -164,10 +173,27 @@ def _run_worker(
         return _error_result(episode_id, params, error)
 
 
+def _invoke_worker(
+    worker_fn: Callable,
+    params: ScenarioParams,
+    limits: UrdfLimits,
+    shield: Shield | None,
+    episode_id: str,
+    run_dir: Path | None,
+    cfg: DetectorConfig,
+    timeout_s: float,
+) -> EpisodeResult | EpisodeError | EpisodeBlocked:
+    if _worker_start_queue is not None:
+        _worker_start_queue.put((os.getpid(), episode_id))
+    return worker_fn(params, limits, shield, episode_id, run_dir, cfg, timeout_s)
+
+
 class EpisodeRunner:
-    def __init__(self) -> None:
+    def __init__(self, worker_fn: Callable = _run_worker) -> None:
+        self._worker_fn = worker_fn
         self._pool: Pool | None = None
         self._workers: int | None = None
+        self._worker_starts = None
         self._episode_count = 0
         self._closed = False
 
@@ -188,6 +214,11 @@ class EpisodeRunner:
             self._pool.join()
             self._pool = None
             self._workers = None
+        if self._worker_starts is not None:
+            close = getattr(self._worker_starts, "close", None)
+            if close is not None:
+                close()
+            self._worker_starts = None
         self._closed = True
 
     def _ensure_pool(self, workers: int) -> None:
@@ -196,9 +227,11 @@ class EpisodeRunner:
         if self._pool is not None:
             self.close(terminate=True)
         self._closed = False
+        self._worker_starts = mp.get_context("spawn").SimpleQueue()
         self._pool = mp.get_context("spawn").Pool(
             processes=workers,
             initializer=_worker_init,
+            initargs=(self._worker_starts,),
         )
         self._workers = workers
 
@@ -243,28 +276,37 @@ class EpisodeRunner:
         self._ensure_pool(workers)
         assert self._pool is not None
         pool = self._pool
-        completion_queue: Queue[tuple[int, EpisodeResult | EpisodeError | EpisodeBlocked]] = Queue()
+        completion_queue: Queue[tuple[int, int, EpisodeResult | EpisodeError | EpisodeBlocked]] = (
+            Queue()
+        )
+        generation = 0
         results: list[EpisodeResult | EpisodeError | EpisodeBlocked | None] = [None] * len(
             params_list
         )
         in_flight: dict[int, float] = {}
+        worker_assignments: dict[int, int] = {}
+        worker_processes: dict[int, BaseProcess] = {}
+        pending_retry: deque[int] = deque()
         next_index = 0
 
         def submit(index: int) -> None:
             params = params_list[index]
             episode_id = episode_ids[index]
+            task_generation = generation
             in_flight[index] = time.monotonic()
 
             def on_success(result: EpisodeResult | EpisodeError | EpisodeBlocked) -> None:
-                completion_queue.put((index, result))
+                completion_queue.put((task_generation, index, result))
 
             def on_error(error: BaseException) -> None:
-                completion_queue.put((index, _error_result(episode_id, params, error)))
+                completion_queue.put(
+                    (task_generation, index, _error_result(episode_id, params, error))
+                )
 
             try:
                 pool.apply_async(
-                    _run_worker,
-                    (params, limits, shield, episode_id, run_dir, cfg, timeout_s),
+                    _invoke_worker,
+                    (self._worker_fn, params, limits, shield, episode_id, run_dir, cfg, timeout_s),
                     callback=on_success,
                     error_callback=on_error,
                 )
@@ -272,15 +314,103 @@ class EpisodeRunner:
                 in_flight.pop(index)
                 results[index] = _error_result(episode_id, params, error)
 
-        while next_index < len(params_list) and len(in_flight) < workers:
-            submit(next_index)
-            next_index += 1
+        def fill_slots() -> None:
+            nonlocal next_index
+            while len(in_flight) < workers:
+                if pending_retry:
+                    index = pending_retry.popleft()
+                elif next_index < len(params_list):
+                    index = next_index
+                    next_index += 1
+                else:
+                    return
+                submit(index)
+
+        def drain_worker_starts() -> None:
+            if self._worker_starts is None:
+                return
+            while not self._worker_starts.empty():
+                pid, episode_id = self._worker_starts.get()
+                index = episode_ids_by_name.get(episode_id)
+                if index is None:
+                    continue
+                worker_assignments[pid] = index
+
+        def accept_completion(
+            index: int, result: EpisodeResult | EpisodeError | EpisodeBlocked
+        ) -> None:
+            in_flight.pop(index, None)
+            results[index] = result
+            for pid, assigned in list(worker_assignments.items()):
+                if assigned == index:
+                    worker_assignments.pop(pid, None)
+
+        def refresh_workers() -> list[int]:
+            for process in getattr(pool, "_pool", ()):
+                if process.pid is not None:
+                    worker_processes[process.pid] = process
+            return [
+                pid for pid, process in worker_processes.items() if process.exitcode is not None
+            ]
+
+        def restart_after_crash(crashed: list[int]) -> None:
+            nonlocal pool, generation, worker_processes
+            crashed_indexes = {
+                worker_assignments[pid]
+                for pid in crashed
+                if pid in worker_assignments and worker_assignments[pid] in in_flight
+            }
+            if not crashed_indexes:
+                return
+            retry_indexes = sorted(set(pending_retry) | (set(in_flight) - crashed_indexes))
+            for index in crashed_indexes:
+                params = params_list[index]
+                results[index] = EpisodeError(
+                    episode_ids[index],
+                    params.model_copy(deep=True),
+                    "worker_crashed",
+                    "worker exited unexpectedly",
+                )
+                in_flight.pop(index, None)
+            self.close(terminate=True)
+            generation += 1
+            self._closed = False
+            self._ensure_pool(workers)
+            assert self._pool is not None
+            pool = self._pool
+            worker_processes = {}
+            worker_assignments.clear()
+            pending_retry.clear()
+            pending_retry.extend(retry_indexes)
+            fill_slots()
+
+        episode_ids_by_name = {episode_id: index for index, episode_id in enumerate(episode_ids)}
+        fill_slots()
 
         while in_flight:
+            drain_worker_starts()
+            while True:
+                try:
+                    completed_generation, completed_index, completed_result = (
+                        completion_queue.get_nowait()
+                    )
+                except Empty:
+                    break
+                if completed_generation == generation:
+                    accept_completion(completed_index, completed_result)
+            if not in_flight:
+                fill_slots()
+                continue
+            dead_workers = refresh_workers()
+            if dead_workers:
+                restart_after_crash(dead_workers)
+                continue
             deadline = min(in_flight.values()) + timeout_s + _PARENT_TIMEOUT_GRACE_S
             wait_s = max(0.0, deadline - time.monotonic())
             try:
-                index, result = completion_queue.get(timeout=wait_s)
+                completed_generation, index, result = completion_queue.get(
+                    timeout=min(wait_s, 0.05)
+                )
             except Empty:
                 if time.monotonic() < deadline:
                     continue
@@ -295,13 +425,15 @@ class EpisodeRunner:
                         )
                 self._closed = False
                 self._ensure_pool(workers)
+                pool = self._pool
+                worker_processes = {}
+                worker_assignments.clear()
+                pending_retry.clear()
                 break
 
-            in_flight.pop(index, None)
-            results[index] = result
-            while next_index < len(params_list) and len(in_flight) < workers:
-                submit(next_index)
-                next_index += 1
+            if completed_generation == generation:
+                accept_completion(index, result)
+            fill_slots()
 
         if any(result is None for result in results):
             raise RuntimeError("batch ended without a result for every episode")

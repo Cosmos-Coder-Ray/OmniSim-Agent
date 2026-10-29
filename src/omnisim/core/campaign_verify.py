@@ -3,18 +3,22 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from omnisim.agents.mitigator import facts_from_campaign, load_domain_bounds, mitigate
 from omnisim.core.exports import EXPORTS_DIR, ExportArtifacts, export_campaign
 from omnisim.core.orchestrator import CampaignOutcome
+from omnisim.core.shield import SafetyShield
 from omnisim.core.verify import (
     RefinementResult,
     VerificationCriteria,
     refine_and_verify,
     write_verification,
 )
+from omnisim.schemas import EpisodeResult, ScenarioParams
 from omnisim.sim.detectors import DetectorConfig
 from omnisim.sim.limits import load_urdf_limits
+from omnisim.sim.runner import EpisodeBlocked, EpisodeError, EpisodeRunner
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -37,6 +41,9 @@ def run_campaign_verification(
     domain_path: Path | None = None,
     exports_root: Path = EXPORTS_DIR,
     stage_callback: Callable[[str], None] | None = None,
+    tuning_count: int = 100,
+    confirmation_count: int = 200,
+    verification_runner=None,
 ) -> CampaignVerification:
     def set_stage(stage: str) -> None:
         if stage_callback is not None:
@@ -90,7 +97,111 @@ def run_campaign_verification(
         domain_bounds=domain_bounds,
         discovery_episodes=outcome.result.episodes,
         stage_callback=report_stage,
+        tuning_count=tuning_count,
+        confirmation_count=confirmation_count,
+        runner=verification_runner,
     )
+    scenarios = refinement.confirmation.scenario_results
+    cases: list[tuple[int, dict[str, Any]]] = []
+    for predicate in (
+        lambda off, on: bool(off["kinds"]) and bool(on["complete"]),
+        lambda off, on: bool(off["kinds"]) and bool(on["blocked"]),
+        lambda off, on: bool(off["kinds"]) and bool(on["kinds"]),
+    ):
+        group: list[tuple[int, dict[str, Any]]] = []
+        for item in scenarios:
+            off, on = item["off"], item["on"]
+            if off["infrastructure_error"] or on["infrastructure_error"]:
+                continue
+            if predicate(off, on):
+                group.append((int(item["index"]), item))
+        cases.extend(sorted(group)[: 3 - len(cases)])
+        if len(cases) >= 3:
+            break
+    showcases: list[dict[str, object]] = []
+    if cases:
+        runner = verification_runner or EpisodeRunner()
+        own_runner = verification_runner is None
+        try:
+            for index, item in cases:
+                params = ScenarioParams.model_validate(item["params"])
+                off_dir = outcome.run_dir / "trajectories" / f"showcase_{index}_off"
+                on_dir = outcome.run_dir / "trajectories" / f"showcase_{index}_on"
+                off = runner.run_batch(
+                    [params], limits, workers=workers, run_dir=off_dir, cfg=DetectorConfig()
+                )[0]
+                on = runner.run_batch(
+                    [params],
+                    limits,
+                    workers=workers,
+                    shield=SafetyShield(refinement.envelope),
+                    run_dir=on_dir,
+                    cfg=DetectorConfig(),
+                )[0]
+                off_kinds = (
+                    sorted({event.kind for event in off.failures})
+                    if isinstance(off, EpisodeResult)
+                    else []
+                )
+                on_kinds = (
+                    sorted({event.kind for event in on.failures})
+                    if isinstance(on, EpisodeResult)
+                    else []
+                )
+                if (
+                    isinstance(off, (EpisodeError, EpisodeBlocked))
+                    or off_kinds != item["off"]["kinds"]
+                ):
+                    continue
+                if not isinstance(off, EpisodeResult):
+                    continue
+                blocked = isinstance(on, EpisodeBlocked)
+                if isinstance(on, EpisodeError):
+                    continue
+                if blocked != item["on"]["blocked"] or on_kinds != item["on"]["kinds"]:
+                    continue
+                if isinstance(on, EpisodeResult) != (item["on"]["result"] is not None):
+                    continue
+                expected_off = dict(item["off"]["result"])
+                actual_off = off.model_dump(mode="json")
+                for result in (expected_off, actual_off):
+                    result.pop("episode_id", None)
+                    result.pop("trajectory_path", None)
+                if expected_off != actual_off:
+                    continue
+                if isinstance(on, EpisodeResult):
+                    expected_on = dict(item["on"]["result"])
+                    actual_on = on.model_dump(mode="json")
+                    for result in (expected_on, actual_on):
+                        result.pop("episode_id", None)
+                        result.pop("trajectory_path", None)
+                    if expected_on != actual_on:
+                        continue
+                showcases.append(
+                    {
+                        "scenario_index": index,
+                        "params": item["params"],
+                        "off_kinds": off_kinds,
+                        "on_kinds": on_kinds,
+                        "on_blocked": blocked,
+                        "off_trajectory": Path(off.trajectory_path)
+                        .resolve()
+                        .relative_to((outcome.run_dir / "trajectories").resolve())
+                        .as_posix()
+                        if isinstance(off, EpisodeResult) and off.trajectory_path
+                        else None,
+                        "on_trajectory": Path(on.trajectory_path)
+                        .resolve()
+                        .relative_to((outcome.run_dir / "trajectories").resolve())
+                        .as_posix()
+                        if isinstance(on, EpisodeResult) and on.trajectory_path
+                        else None,
+                    }
+                )
+        finally:
+            if own_runner:
+                runner.close()
+    refinement = replace(refinement, showcases=tuple(showcases))
     base_verification = refinement.envelope.verification
     verification = {
         **base_verification,
@@ -104,6 +215,7 @@ def run_campaign_verification(
         "confirmation_seed": refinement.confirmation_seed,
         "tuning": [item.to_dict() for item in refinement.tuning_results],
         "confirmation": refinement.confirmation.to_dict(),
+        "showcases": list(refinement.showcases),
     }
     envelope = refinement.envelope.model_copy(update={"verification": verification})
     refinement = replace(refinement, envelope=envelope)

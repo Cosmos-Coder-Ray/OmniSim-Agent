@@ -86,8 +86,11 @@ def shrink(
         if sims_used >= cap:
             return ShrinkResult(minimal, sims_used, False, trace)
         candidate = minimal.model_copy(update={name: target})
-        result = evaluate(candidate)
         sims_used += 1
+        try:
+            result = evaluate(candidate)
+        except Exception:
+            return ShrinkResult(minimal, sims_used, False, trace)
         persisted = _persists(result, cluster_key)
         trace.append((name, target, persisted))
         if persisted:
@@ -111,8 +114,11 @@ def shrink(
             if value in {preserved, rejected}:
                 continue
             candidate = minimal.model_copy(update={name: value})
-            result = evaluate(candidate)
             sims_used += 1
+            try:
+                result = evaluate(candidate)
+            except Exception:
+                return ShrinkResult(minimal, sims_used, False, trace)
             persisted = _persists(result, cluster_key)
             trace.append((name, value, persisted))
             steps[name] += 1

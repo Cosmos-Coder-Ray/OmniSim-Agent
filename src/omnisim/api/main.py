@@ -39,10 +39,12 @@ from omnisim.api.paths import ApiPaths
 from omnisim.api.store import ApiStore, JobRecord
 from omnisim.api.stream import EventTailer
 from omnisim.api.worker import run_campaign_job
+from omnisim.audit_log import bind_log_context, configure_logging, reset_log_context
 from omnisim.config import Settings
 from omnisim.core.orchestrator import _now
 from omnisim.knowledge.usage import get_knowledge_usage
 from omnisim.llm.budget import LLMUnavailable, get_usage_summary
+from omnisim.llm.call_log import provider_host
 from omnisim.llm.models import Role, resolve_model
 from omnisim.schemas import BenchmarkResult, CampaignEvent, CampaignResult, EpisodeResult
 
@@ -177,6 +179,67 @@ def _episodes(path: Path, campaign_id: str) -> list[EpisodeResult] | None:
     return episodes
 
 
+def _campaign_warnings(
+    events: list[CampaignEvent], episodes: list[EpisodeResult], cache_hits: int = 0
+) -> list[str]:
+    warnings: list[str] = []
+    fallback_batches = sum(
+        event.type == "hypothesis"
+        and any(origin != "llm" for origin in event.data.get("origins", []))
+        for event in events
+    )
+    spec_failures = sum(
+        event.type == "spec_ready" and not event.data.get("ok", False) for event in events
+    )
+    diagnosis_failures = sum(
+        event.type == "diagnosis_ready" and not event.data.get("ok", False) for event in events
+    )
+    episode_failures = sum(bool(episode.failures) for episode in episodes)
+    if fallback_batches:
+        warnings.append(f"{fallback_batches} Nemotron batches included deterministic proposals.")
+    if spec_failures:
+        warnings.append(f"{spec_failures} hardware evidence stages were unavailable.")
+    if diagnosis_failures:
+        warnings.append(f"{diagnosis_failures} diagnoses were unavailable.")
+    if episode_failures:
+        warnings.append(f"{episode_failures} episodes triggered safety detectors.")
+    if any(
+        event.type == "campaign_done" and event.data.get("status") == "token_cap"
+        for event in events
+    ):
+        warnings.append("The campaign reached its token budget.")
+    if cache_hits:
+        warnings.append(f"{cache_hits} manufacturer evidence lookups used the local cache.")
+    return warnings
+
+
+def _run_artifact(path: Path, name: str) -> dict[str, object] | None:
+    target = path / name
+    if target.is_symlink() or not target.is_file():
+        return None
+    try:
+        value = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _run_cache_hits(path: Path, run_id: str) -> int:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()[-2000:]
+    except OSError:
+        return 0
+    hits = 0
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("run_id") == run_id and row.get("cache") == "hit":
+            hits += 1
+    return hits
+
+
 def _planned_stages(record: JobRecord | None) -> list[CampaignStage]:
     if record is None:
         return []
@@ -236,6 +299,7 @@ def _recorded_state(name: str, directory: Path, campaign: CampaignResult) -> Cam
         created_at=started_at,
         started_at=started_at,
         finished_at=(str(terminal.ts) if terminal is not None else None),
+        warnings=_campaign_warnings(campaign.events, campaign.episodes),
     )
 
 
@@ -358,6 +422,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        configure_logging()
         store = ApiStore(active_paths.database)
         store.initialize()
         _reconcile(store, active_paths)
@@ -424,10 +489,18 @@ def create_app(
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
-        response = await call_next(request)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "no-referrer")
-        return response
+        request_id = request.headers.get("x-request-id")
+        if request_id is None or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            request_id = uuid4().hex
+        tokens = bind_log_context(request_id=request_id)
+        try:
+            response = await call_next(request)
+            response.headers.setdefault("X-Request-ID", request_id)
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+            response.headers.setdefault("Referrer-Policy", "no-referrer")
+            return response
+        finally:
+            reset_log_context(tokens)
 
     def rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
         del exc
@@ -454,16 +527,57 @@ def create_app(
     @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
     def health(request: Request) -> HealthResponse:
         del request
+        token_usage = get_usage_summary(
+            cap=active_settings.OMNISIM_DAILY_TOKEN_CAP,
+            db_path=active_paths.data / "llm_usage.sqlite3",
+            now=clock(),
+        )
+        reasons: list[str] = []
+        cap = active_settings.OMNISIM_DAILY_TOKEN_CAP
+        used = int(token_usage.get("prompt_tokens", 0)) + int(
+            token_usage.get("completion_tokens", 0)
+        )
+        if cap > 0 and (cap - used) / cap <= 0.1:
+            reasons.append("token_headroom_low")
+        cutoff = (clock().astimezone(UTC)).timestamp() - 600
+        for status, finished_at in app.state.store.recent_outcomes(
+            datetime.fromtimestamp(cutoff, UTC).isoformat()
+        ):
+            if status in {"error", "interrupted"}:
+                reasons.append("recent_job_failure")
+                break
+        for log_path in (
+            active_paths.data / "llm_calls.jsonl",
+            active_paths.data / "knowledge_calls.jsonl",
+        ):
+            try:
+                rows = log_path.read_text(encoding="utf-8").splitlines()[-200:]
+            except OSError:
+                continue
+            failures = 0
+            for line in reversed(rows):
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and row.get("failure_kind") == "transport":
+                    failures += 1
+                    if failures >= 3:
+                        reasons.append("provider_transport_failures")
+                        break
+                elif isinstance(row, dict) and row.get("ok") is True:
+                    break
+            if "provider_transport_failures" in reasons:
+                break
         return HealthResponse(
+            status="degraded" if reasons else "ok",
+            reasons=reasons,
+            provider_host=provider_host(),
             demo_mode=active_settings.OMNISIM_DEMO_MODE,
             demo_ready=app.state.demo_ready,
             recorded_runs=app.state.recorded_runs,
             queue=app.state.runner.queue_snapshot(),
-            token_usage=get_usage_summary(
-                cap=active_settings.OMNISIM_DAILY_TOKEN_CAP,
-                db_path=active_paths.data / "llm_usage.sqlite3",
-                now=clock(),
-            ),
+            token_usage=token_usage,
             knowledge_usage=get_knowledge_usage(
                 path=active_paths.data / "knowledge_calls.jsonl",
                 now=clock(),
@@ -589,6 +703,11 @@ def create_app(
             episodes = _episodes(run_dir, campaign_id)
             if episodes is None:
                 return _error_response(500, "internal_error", "campaign episodes are unavailable")
+        warnings = _campaign_warnings(
+            events,
+            episodes or [],
+            _run_cache_hits(active_paths.data / "knowledge_calls.jsonl", campaign_id),
+        )
         return CampaignState(
             campaign_id=campaign_id,
             status=record.status,
@@ -602,6 +721,90 @@ def create_app(
             started_at=record.started_at,
             finished_at=record.finished_at,
             queue_position=app.state.runner.queue_position(campaign_id),
+            warnings=warnings,
+        )
+
+    @app.get("/api/campaigns/{campaign_id}/evidence", operation_id="getCampaignEvidence")
+    @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
+    def campaign_evidence(campaign_id: str, request: Request) -> Response:
+        del request
+        recorded = not CAMPAIGN_ID.fullmatch(campaign_id)
+        if recorded:
+            demo = _recorded_campaign(active_paths, campaign_id)
+            if demo is None:
+                return (
+                    _demo_unavailable()
+                    if _configured_demo_missing(active_settings, campaign_id)
+                    else _error_response(404, "not_found", "campaign was not found")
+                )
+            run_dir = demo[0]
+            run_id = (
+                demo[1].events[0].data.get("run_id", campaign_id) if demo[1].events else campaign_id
+            )
+        else:
+            run_dir = _run_path(active_paths, campaign_id)
+            if run_dir is None or app.state.store.get(campaign_id) is None:
+                return _error_response(404, "not_found", "campaign was not found")
+            run_id = campaign_id
+        artifact = _run_artifact(run_dir, "spec.json")
+        if artifact is None:
+            return _error_response(404, "not_found", "campaign evidence was not found")
+        calls: list[dict[str, object]] = []
+        try:
+            lines = (
+                (active_paths.data / "knowledge_calls.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()[-2000:]
+            )
+        except OSError:
+            lines = []
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and row.get("run_id") == run_id:
+                calls.append(row)
+        fetched = [str(row["fetched_at"]) for row in calls if row.get("fetched_at")]
+        provenance = {
+            "cached": any(row.get("cache") == "hit" for row in calls),
+            "fetch_time_start": min(fetched) if fetched else None,
+            "fetch_time_end": max(fetched) if fetched else None,
+            "live_calls": sum(row.get("cache") == "miss" for row in calls),
+            "cache_hits": sum(row.get("cache") == "hit" for row in calls),
+        }
+        return JSONResponse(
+            {
+                "campaign_id": campaign_id,
+                "source": "recorded" if recorded else "live",
+                **artifact,
+                "provenance": provenance,
+            }
+        )
+
+    @app.get("/api/campaigns/{campaign_id}/verification", operation_id="getCampaignVerification")
+    @limiter.limit(active_settings.OMNISIM_API_OTHER_RATE_LIMIT)
+    def campaign_verification(campaign_id: str, request: Request) -> Response:
+        del request
+        recorded = not CAMPAIGN_ID.fullmatch(campaign_id)
+        if recorded:
+            demo = _recorded_campaign(active_paths, campaign_id)
+            if demo is None:
+                return (
+                    _demo_unavailable()
+                    if _configured_demo_missing(active_settings, campaign_id)
+                    else _error_response(404, "not_found", "campaign was not found")
+                )
+            run_dir = demo[0]
+        else:
+            run_dir = _run_path(active_paths, campaign_id)
+            if run_dir is None or app.state.store.get(campaign_id) is None:
+                return _error_response(404, "not_found", "campaign was not found")
+        artifact = _run_artifact(run_dir, "verification.json")
+        if artifact is None:
+            return _error_response(404, "not_found", "campaign verification was not found")
+        return JSONResponse(
+            {"campaign_id": campaign_id, "source": "recorded" if recorded else "live", **artifact}
         )
 
     @app.get(

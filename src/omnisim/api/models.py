@@ -96,6 +96,7 @@ class CampaignState(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     queue_position: int | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class CampaignCancellation(BaseModel):
@@ -110,7 +111,9 @@ class ApiError(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: Literal["ok"] = "ok"
+    status: Literal["ok", "degraded"] = "ok"
+    reasons: list[str] = Field(default_factory=list)
+    provider_host: str | None = None
     demo_mode: bool
     demo_ready: bool
     recorded_runs: list[str]

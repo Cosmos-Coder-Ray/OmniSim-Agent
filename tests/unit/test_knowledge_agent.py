@@ -1,10 +1,15 @@
 import numpy as np
 import pytest
+import requests
+from tavily.errors import TavilyKeylessLimitError
 
 from omnisim.knowledge import compare
 from omnisim.knowledge import tavily_agent as agent
+from omnisim.knowledge.errors import KnowledgeUnavailable
 from omnisim.knowledge.tavily_agent import ErrorsDraft, LimitDraft, LimitsDraft
-from omnisim.llm.budget import LLMUnavailable
+from omnisim.llm.budget import BudgetExceeded, LLMUnavailable
+from omnisim.llm.nebius import LLMOutputError
+from omnisim.resilience import CircuitBreaker
 from omnisim.schemas import Evidence, HardwareSpec
 from omnisim.sim.limits import UrdfLimits
 
@@ -117,6 +122,72 @@ def test_build_spec_propagates_llm_errors(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(agent, "chat_json", fail)
     with pytest.raises(LLMUnavailable, match="synthetic failure"):
         agent.build_spec("franka_panda")
+
+
+def test_tavily_live_call_retries_transport_failure_four_times(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(agent, "_circuit", CircuitBreaker())
+    errors = [requests.ConnectionError("offline") for _ in range(3)]
+    calls = 0
+    delays: list[float] = []
+
+    def live(timeout: float):
+        nonlocal calls
+        calls += 1
+        if errors:
+            raise errors.pop(0)
+        return {"results": []}
+
+    result = agent._run_live(
+        "search",
+        "run-a",
+        live,
+        call_log_path=tmp_path / "calls.jsonl",
+        call_id="call-a",
+        sleep=delays.append,
+        rng=lambda: 0.5,
+    )
+
+    assert result == {"results": []}
+    assert calls == 4
+    assert delays == [0.5, 1.0, 2.0]
+
+
+def test_tavily_retry_after_is_capped(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(agent, "_circuit", CircuitBreaker())
+    calls = 0
+    delays: list[float] = []
+
+    def live(timeout: float):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TavilyKeylessLimitError("slow down", retry_after_seconds=45)
+        return {"results": []}
+
+    agent._run_live(
+        "search",
+        "run-a",
+        live,
+        call_log_path=tmp_path / "calls.jsonl",
+        call_id="call-a",
+        sleep=delays.append,
+        rng=lambda: 0,
+    )
+
+    assert delays == [30]
+
+
+def test_tavily_cache_miss_without_credentials_is_unavailable(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(agent, "_circuit", CircuitBreaker())
+    monkeypatch.setattr(agent, "_client", lambda: (_ for _ in ()).throw(ValueError("missing key")))
+
+    with pytest.raises(KnowledgeUnavailable, match="client unavailable"):
+        agent._search(
+            "query",
+            ("franka.de",),
+            cache_dir=tmp_path / "cache",
+            call_log_path=tmp_path / "calls.jsonl",
+        )
 
 
 def _spec(*items: Evidence, errors: list[Evidence] | None = None) -> HardwareSpec:
@@ -303,3 +374,50 @@ def test_error_mapping_without_verified_candidates_is_no_match() -> None:
     assert result["collision"].real_error_name is None
     assert result["collision"].evidence is None
     assert result["collision"].confidence is None
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        LLMUnavailable("offline"),
+        LLMOutputError("invalid output", ValueError("bad json")),
+        RuntimeError("provider failed"),
+    ],
+)
+def test_error_mapping_llm_failure_is_explicit_no_match(monkeypatch, error) -> None:
+    evidence = Evidence(
+        claim="Error E17",
+        value="E17",
+        source_url="https://docs.test",
+        quote="Fault code E17 is documented in this manual.",
+        verified=True,
+    )
+    monkeypatch.setattr(
+        agent,
+        "chat_json",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+
+    result = agent.map_failures_to_real_errors(["collision"], _spec(errors=[evidence]))
+
+    assert result["collision"].real_error_name is None
+    assert result["collision"].evidence is None
+    assert result["collision"].confidence is None
+
+
+def test_error_mapping_budget_exhaustion_propagates(monkeypatch) -> None:
+    evidence = Evidence(
+        claim="Error E17",
+        value="E17",
+        source_url="https://docs.test",
+        quote="Fault code E17 is documented in this manual.",
+        verified=True,
+    )
+    monkeypatch.setattr(
+        agent,
+        "chat_json",
+        lambda *args, **kwargs: (_ for _ in ()).throw(BudgetExceeded("cap")),
+    )
+
+    with pytest.raises(BudgetExceeded):
+        agent.map_failures_to_real_errors(["collision"], _spec(errors=[evidence]))

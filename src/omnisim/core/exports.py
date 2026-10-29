@@ -283,6 +283,7 @@ def export_campaign(
                 "confirmation_seed": refinement.confirmation_seed,
                 "tuning": [result.to_dict() for result in refinement.tuning_results],
                 "confirmation": refinement.confirmation.to_dict(),
+                "showcases": list(refinement.showcases),
             }
         ),
     }

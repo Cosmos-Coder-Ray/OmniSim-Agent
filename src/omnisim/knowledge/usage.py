@@ -1,7 +1,11 @@
 import json
+import os
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+
+from omnisim.audit_log import log_event
 
 CALL_LOG_PATH = Path(__file__).resolve().parents[3] / "data" / "knowledge_calls.jsonl"
 
@@ -23,11 +27,36 @@ def log_call(entry: dict[str, Any], *, path: Path = CALL_LOG_PATH) -> None:
             "n_results",
             "ok",
             "error",
+            "call_id",
+            "attempt",
+            "status_code",
+            "failure_kind",
+            "fetched_at",
+            "provider",
+            "process_id",
+            "event",
         )
     }
     row["ts"] = row["ts"] or datetime.now(UTC).isoformat()
+    row["call_id"] = row["call_id"] or uuid4().hex
+    row["provider"] = row["provider"] or "tavily"
+    row["process_id"] = row["process_id"] or os.getpid()
+    row["attempt"] = row["attempt"] or 1
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+    log_event(
+        str(row["event"] or "provider_call"),
+        run_id=row["run_id"],
+        provider=row["provider"],
+        operation=row["op"],
+        attempt=row["attempt"],
+        latency_s=row["latency_s"],
+        status_code=row["status_code"],
+        failure_kind=row["failure_kind"],
+        ok=row["ok"],
+        error_type=row["error"],
+        cache=row["cache"],
+    )
 
 
 def get_knowledge_usage(

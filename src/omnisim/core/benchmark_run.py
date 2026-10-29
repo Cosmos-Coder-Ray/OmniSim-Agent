@@ -133,6 +133,7 @@ def run_benchmark(
     cache_hits = 0
     llm_tokens = 0
     model_ids: set[str] = set()
+    provider_hosts: set[str] = set()
     cmaes_population_size: int | None = None
     started = time.perf_counter()
 
@@ -169,6 +170,8 @@ def run_benchmark(
                             llm_tokens += strategy.last_usage.total
                         if strategy.resolved_model_id:
                             model_ids.add(strategy.resolved_model_id)
+                        if strategy.last_provider_host:
+                            provider_hosts.add(strategy.last_provider_host)
                     for offset, (origin, trial) in enumerate(zip(origins, trials, strict=True)):
                         nonlocal simulation_index
                         episode_errors += int(trial.error is not None)
@@ -216,6 +219,8 @@ def run_benchmark(
         "type": "header",
         "format_version": 1,
         "resolved_model_id": resolved_model_id,
+        "provider_host": next(iter(provider_hosts)) if len(provider_hosts) == 1 else None,
+        "provider_hosts": sorted(provider_hosts),
         "temperature": LLM_TEMPERATURE,
         "max_tokens": LLM_MAX_TOKENS,
         "prompt_file": "src/omnisim/llm/prompts/adversary_system.md",

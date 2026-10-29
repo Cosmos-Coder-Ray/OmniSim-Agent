@@ -9,6 +9,7 @@ from rich.console import Console
 
 from omnisim.core.demo_run import DEMO_RUNS_DIR, save_demo_run
 from omnisim.core.orchestrator import RUNS_DIR
+from omnisim.llm.call_log import provider_hosts_for_run
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -34,6 +35,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     console = Console()
     console.print(f"saved recorded run: {saved.path}")
+    hosts = provider_hosts_for_run(args.run_id)
+    console.print(f"[bold]provider host(s): {', '.join(hosts) if hosts else 'not recorded'}[/bold]")
     for filename, size in saved.files:
         console.print(f"{filename}  {size} bytes")
     return 0

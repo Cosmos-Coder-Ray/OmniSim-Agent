@@ -17,7 +17,8 @@ from omnisim.agents.baselines import (
     normalize,
 )
 from omnisim.llm import nebius
-from omnisim.llm.budget import BudgetExceeded, LLMError, Usage
+from omnisim.llm.budget import BudgetExceeded, Usage
+from omnisim.llm.call_log import provider_host
 from omnisim.schemas import ScenarioParams
 
 PROMPT_PATH = Path(__file__).parents[1] / "llm" / "prompts" / "adversary_system.md"
@@ -43,6 +44,7 @@ class NemotronAdversary(Strategy):
         llm_fraction: float = 1.0,
         epsilon: float = 0.001,
         total_budget: int | None = None,
+        run_id: str | None = None,
         chat_json: ChatJSON | None = None,
         prompt_path: Path | None = None,
     ) -> None:
@@ -54,6 +56,7 @@ class NemotronAdversary(Strategy):
         self.llm_fraction = llm_fraction
         self.epsilon = epsilon
         self.total_budget = total_budget
+        self.run_id = run_id
         self._chat_json = chat_json or nebius.chat_json
         self.prompt_path = prompt_path or PROMPT_PATH
         self.last_origins: list[ProposalOrigin] = []
@@ -62,6 +65,7 @@ class NemotronAdversary(Strategy):
         self.last_cache_hit = False
         self.last_call_made = False
         self.resolved_model_id: str | None = None
+        self.last_provider_host: str | None = None
 
     def _request(
         self, history: list[Trial], bounds: Mapping[str, tuple[float, float]], k: int
@@ -108,18 +112,17 @@ class NemotronAdversary(Strategy):
             sort_keys=True,
             separators=(",", ":"),
         )
-        response, usage = self._chat_json(
-            "fast",
-            prompt,
-            user,
-            AdversaryResponse,
-            temperature=0.7,
-            max_tokens=4096,
-        )
+        options: dict[str, Any] = {"temperature": 0.7, "max_tokens": 4096}
+        if self.run_id is not None:
+            options["run_id"] = self.run_id
+        response, usage = self._chat_json("fast", prompt, user, AdversaryResponse, **options)
         self.last_usage = usage
         self.last_cache_hit = bool(getattr(self._chat_json, "last_cache_hit", False))
         self.last_call_made = True
         self.resolved_model_id = getattr(self._chat_json, "last_model_id", None)
+        self.last_provider_host = getattr(self._chat_json, "last_provider_host", None)
+        if self.last_provider_host is None:
+            self.last_provider_host = provider_host()
         return response.hypothesis[:400], response.scenarios
 
     @staticmethod
@@ -210,7 +213,7 @@ class NemotronAdversary(Strategy):
                 hypothesis, raw_scenarios = self._request(history, bounds, requested_llm)
             except BudgetExceeded:
                 raise
-            except LLMError:
+            except Exception:
                 hypothesis = "LLM unavailable; using deterministic fallback proposals."
                 self.last_fallback = True
 

@@ -8,6 +8,7 @@ import pytest
 from omnisim.agents.adversary import AdversaryResponse, NemotronAdversary
 from omnisim.agents.baselines import Trial, normalize, scenario_bounds
 from omnisim.llm.budget import BudgetExceeded, LLMUnavailable, Usage
+from omnisim.llm.nebius import LLMOutputError
 from omnisim.schemas import EpisodeResult, ScenarioParams
 
 
@@ -143,6 +144,54 @@ def test_budget_exceeded_propagates() -> None:
 
     with pytest.raises(BudgetExceeded):
         adversary.propose([], scenario_bounds(), 1)
+
+
+def test_adversary_passes_campaign_id_to_chat_call() -> None:
+    kwargs: dict[str, object] = {}
+
+    def chat_json(*args: object, **options: object) -> tuple[AdversaryResponse, Usage]:
+        kwargs.update(options)
+        return AdversaryResponse(), Usage()
+
+    adversary = NemotronAdversary(seed=3, run_id="campaign-a", chat_json=chat_json)
+
+    adversary._request([], scenario_bounds(), 1)
+
+    assert kwargs["run_id"] == "campaign-a"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        LLMUnavailable("offline"),
+        LLMOutputError("invalid output", ValueError("bad json")),
+    ],
+)
+def test_adversary_uses_explicit_deterministic_proposals_on_llm_error(error) -> None:
+    adversary = NemotronAdversary(
+        seed=3,
+        chat_json=lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+
+    hypothesis, proposals = adversary.propose([], scenario_bounds(), 2)
+
+    assert len(proposals) == 2
+    assert adversary.last_fallback
+    assert adversary.last_origins == ["explore", "explore"]
+    assert "deterministic fallback" in hypothesis
+
+
+def test_adversary_uses_deterministic_proposals_on_unexpected_llm_error() -> None:
+    adversary = NemotronAdversary(
+        seed=3,
+        chat_json=lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("provider failed")),
+    )
+
+    hypothesis, proposals = adversary.propose([], scenario_bounds(), 2)
+
+    assert len(proposals) == 2
+    assert adversary.last_fallback
+    assert "deterministic fallback" in hypothesis
 
 
 @pytest.mark.parametrize("k", [1, 2, 4, 5])

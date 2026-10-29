@@ -9,7 +9,9 @@ import pytest
 
 from omnisim.core.orchestrator import campaign_events, run_campaign
 from omnisim.core.shield import EpisodeBlocked
-from omnisim.llm.budget import BudgetExceeded
+from omnisim.knowledge.errors import KnowledgeUnavailable
+from omnisim.llm.budget import BudgetExceeded, LLMUnavailable
+from omnisim.llm.nebius import LLMOutputError
 from omnisim.schemas import (
     CampaignEvent,
     DiagnosisReport,
@@ -411,5 +413,111 @@ def test_diagnosis_validation_error_is_reported_without_failing_sim_search(
 
     ready = next(event for event in outcome.result.events if event.type == "diagnosis_ready")
     assert ready.data["ok"] is False
-    assert "unsupported numeric claim" in ready.data["error"]
+    assert ready.data["error"] == "diagnosis failed"
     assert outcome.result.events[-1].data["status"] == "completed"
+
+
+@pytest.mark.parametrize(
+    ("failure", "status"),
+    [
+        ("unavailable", "error"),
+        ("output", "error"),
+        ("knowledge", "error"),
+        ("budget", "token_cap"),
+    ],
+)
+def test_spec_failure_emits_false_without_partial_evidence(
+    tmp_path: Path, failure: str, status: str
+) -> None:
+    def build_spec(*args, **kwargs):
+        if failure == "unavailable":
+            raise LLMUnavailable("offline")
+        if failure == "output":
+            raise LLMOutputError("invalid output", ValueError("bad json"))
+        if failure == "knowledge":
+            raise KnowledgeUnavailable("tavily unavailable")
+        raise BudgetExceeded("cap")
+
+    outcome = run_campaign(
+        **run_options(
+            tmp_path,
+            FakeRunner(),
+            spec=None,
+            build_spec_fn=build_spec,
+        )
+    )
+
+    ready = next(event for event in outcome.result.events if event.type == "spec_ready")
+    artifact = json.loads((outcome.run_dir / "spec.json").read_text(encoding="utf-8"))
+    assert ready.data["ok"] is False
+    assert artifact["spec"] is None
+    assert artifact.get("evidence") is None
+    assert outcome.result.events[-1].data["status"] == status
+
+
+@pytest.mark.parametrize(
+    ("failure", "status"),
+    [("unavailable", "completed"), ("unexpected", "completed"), ("budget", "token_cap")],
+)
+def test_mapping_failure_keeps_spec_and_uses_no_match_results(
+    tmp_path: Path, failure: str, status: str
+) -> None:
+    def fail_mapping(kinds, spec, *, run_id=None):
+        if failure == "unavailable":
+            raise LLMUnavailable("offline")
+        if failure == "budget":
+            raise BudgetExceeded("cap")
+        raise RuntimeError("mapping failed")
+
+    outcome = run_campaign(
+        **run_options(
+            tmp_path,
+            FakeRunner(failures=True),
+            stop_after_clusters=1,
+            max_diagnosed=0,
+            mapping_fn=fail_mapping,
+        )
+    )
+
+    ready = next(event for event in outcome.result.events if event.type == "spec_ready")
+    artifact = json.loads((outcome.run_dir / "spec.json").read_text(encoding="utf-8"))
+    assert ready.data["ok"] is True
+    assert artifact["spec"]["robot"] == "Panda"
+    assert set(artifact["error_mappings"]) == {"tracking_error"}
+    mapping = artifact["error_mappings"]["tracking_error"]
+    assert mapping["real_error_name"] is None
+    expected_error = {"unavailable": "LLMUnavailable", "unexpected": "RuntimeError"}.get(failure)
+    assert artifact.get("mapping_error") == expected_error
+    assert outcome.result.events[-1].data["status"] == status
+
+
+@pytest.mark.parametrize(
+    ("failure", "status"),
+    [("unavailable", "completed"), ("output", "completed"), ("budget", "token_cap")],
+)
+def test_diagnosis_failure_emits_false_and_continues(
+    tmp_path: Path, failure: str, status: str
+) -> None:
+    def fail_diagnosis(*args, **kwargs):
+        if failure == "unavailable":
+            raise LLMUnavailable("offline")
+        if failure == "output":
+            raise LLMOutputError("invalid output", ValueError("bad json"))
+        raise BudgetExceeded("cap")
+
+    outcome = run_campaign(
+        **run_options(
+            tmp_path,
+            FakeRunner(failures=True),
+            stop_after_clusters=1,
+            max_diagnosed=1,
+            diagnose_fn=fail_diagnosis,
+        )
+    )
+
+    ready = next(event for event in outcome.result.events if event.type == "diagnosis_ready")
+    assert ready.data["ok"] is False
+    assert ready.data["error"] == (
+        "token cap reached" if failure == "budget" else "diagnosis failed"
+    )
+    assert outcome.result.events[-1].data["status"] == status
