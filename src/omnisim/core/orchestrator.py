@@ -11,6 +11,7 @@ from typing import Literal
 from omnisim.agents.baselines import Trial
 from omnisim.agents.diagnostician import diagnose
 from omnisim.agents.factory import make_strategy
+from omnisim.audit_log import log_event, set_log_context
 from omnisim.core.campaign import BatchRunner, iter_trial_batches
 from omnisim.core.clustering import ClusteringResult, ClusterSummary, atlas_points, cluster_episodes
 from omnisim.core.shield import EpisodeBlocked
@@ -180,6 +181,8 @@ def campaign_events(
     episodes_file = episodes_path.open("w", encoding="utf-8")
 
     def set_stage(stage: str) -> None:
+        set_log_context(run_id=campaign_id, campaign_id=campaign_id, stage=stage)
+        log_event("campaign_stage", run_id=campaign_id, campaign_id=campaign_id, stage=stage)
         if on_stage is not None:
             on_stage(stage)
 

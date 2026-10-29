@@ -39,6 +39,7 @@ from omnisim.api.paths import ApiPaths
 from omnisim.api.store import ApiStore, JobRecord
 from omnisim.api.stream import EventTailer
 from omnisim.api.worker import run_campaign_job
+from omnisim.audit_log import bind_log_context, configure_logging, reset_log_context
 from omnisim.config import Settings
 from omnisim.core.orchestrator import _now
 from omnisim.knowledge.usage import get_knowledge_usage
@@ -358,6 +359,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        configure_logging()
         store = ApiStore(active_paths.database)
         store.initialize()
         _reconcile(store, active_paths)
@@ -424,10 +426,18 @@ def create_app(
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
-        response = await call_next(request)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "no-referrer")
-        return response
+        request_id = request.headers.get("x-request-id")
+        if request_id is None or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            request_id = uuid4().hex
+        tokens = bind_log_context(request_id=request_id)
+        try:
+            response = await call_next(request)
+            response.headers.setdefault("X-Request-ID", request_id)
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+            response.headers.setdefault("Referrer-Policy", "no-referrer")
+            return response
+        finally:
+            reset_log_context(tokens)
 
     def rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
         del exc

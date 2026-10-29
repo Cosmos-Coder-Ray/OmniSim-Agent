@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from omnisim.audit_log import log_event
+
 LOG_PATH = Path(__file__).resolve().parents[3] / "data" / "llm_calls.jsonl"
 FIELDS = (
     "ts",
@@ -93,3 +95,18 @@ def write_call_log(entry: dict[str, Any], *, path: Path = LOG_PATH) -> None:
         row["attempt"] = 1
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+    log_event(
+        str(row["event"] or "provider_call"),
+        run_id=row["run_id"],
+        provider=row["provider"] or "nebius",
+        provider_host=row["provider_host"],
+        role=row["role"],
+        attempt=row["attempt"],
+        latency_s=row["latency_s"],
+        prompt_tokens=row["prompt_tokens"],
+        completion_tokens=row["completion_tokens"],
+        ok=row["ok"],
+        error_type=row["error"],
+        status_code=row["status_code"],
+        failure_kind=row["failure_kind"],
+    )

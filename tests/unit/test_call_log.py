@@ -1,5 +1,7 @@
 import json
+import logging
 
+from omnisim.audit_log import JsonFormatter, bind_log_context, reset_log_context
 from omnisim.llm.call_log import provider_host, provider_hosts_for_run, write_call_log
 
 
@@ -46,3 +48,23 @@ def test_provider_hosts_for_run_reads_matching_safe_hosts(tmp_path) -> None:
         "api.test.invalid",
         "other.test.invalid",
     ]
+
+
+def test_json_formatter_whitelists_and_redacts_context_and_fields() -> None:
+    tokens = bind_log_context(request_id="a" * 32, run_id="b" * 32)
+    try:
+        record = logging.LogRecord(
+            "omnisim.audit", logging.ERROR, "test.py", 1, "sentinel prompt", (), None
+        )
+        record.event = "provider_call"
+        record.provider_host = "https://user:pass@provider.example/v1?key=sentinel-secret"
+        record.error_type = "RuntimeError"
+        record.unlisted = "sentinel-body"
+        row = json.loads(JsonFormatter().format(record))
+    finally:
+        reset_log_context(tokens)
+    serialized = json.dumps(row)
+    assert row["run_id"] == "b" * 32
+    assert row["provider_host"] == "provider.example"
+    assert row["error_type"] == "RuntimeError"
+    assert "sentinel" not in serialized and "user" not in serialized and "pass" not in serialized

@@ -16,6 +16,7 @@ from queue import Empty, Queue
 import pybullet as p
 import pybullet_data
 
+from omnisim.audit_log import configure_logging
 from omnisim.core.shield import EpisodeBlocked, Shield
 from omnisim.schemas import (
     EpisodeResult,
@@ -135,6 +136,7 @@ def run_episode(
 def _worker_init(start_queue=None) -> None:
     global _worker_start_queue
     _worker_start_queue = start_queue
+    configure_logging()
     p.getAPIVersion()
     pybullet_data.getDataPath()
 
