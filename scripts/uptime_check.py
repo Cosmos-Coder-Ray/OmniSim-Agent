@@ -18,7 +18,11 @@ def check_health(base_url: str, check_demo: bool = False) -> bool:
     except (URLError, TimeoutError, json.JSONDecodeError) as exc:
         print(f"health check failed: {exc}")
         return False
-    if not isinstance(health, dict) or "token_usage" not in health or "knowledge_usage" not in health:
+    if (
+        not isinstance(health, dict)
+        or "token_usage" not in health
+        or "knowledge_usage" not in health
+    ):
         print("health response is missing usage fields")
         return False
     if check_demo and not health.get("demo_ready") and not health.get("model_resolution"):
